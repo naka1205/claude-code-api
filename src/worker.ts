@@ -1,113 +1,196 @@
 /**
- * Cloudflare Workers 入口文件
- * 负责 Workers 生命周期、CORS 处理和请求路由
+ * Cloudflare Workers Entry Point
+ * Claude to Gemini API Compatibility Layer
  */
 
-import { RequestHandler, KeyBalancer } from './handler';
+import { RequestHandler } from './handler';
+import { StreamManager } from './handler/stream-manager';
+import { Config } from './config';
 
 export interface Env {
-  KV: KVNamespace;
-  ALLOWED_ORIGINS?: string;
+  KV?: KVNamespace;  // Make KV optional
+  // Environment variables can be accessed here
+  GEMINI_API_KEYS?: string;
+  PORT?: string;
+  HOST?: string;
+  CORS_ENABLED?: string;
+  ENABLE_VALIDATION?: string;
+  ENABLE_LOGGING?: string;
 }
 
 /**
- * 处理 CORS 头
+ * Parse request body safely
  */
-function createCorsHeaders(origin: string | null, env: Env): HeadersInit {
-  const allowedOrigins = env.ALLOWED_ORIGINS
-    ? env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : ['*'];
-
-  const allowOrigin = !origin || allowedOrigins.includes('*')
-    ? '*'
-    : allowedOrigins.includes(origin)
-    ? origin
-    : allowedOrigins[0] || '*';
-
-  return {
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
-    'Access-Control-Max-Age': '86400',
-  };
+async function parseBody(request: Request): Promise<any> {
+  try {
+    const contentType = request.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      return await request.json();
+    }
+    return await request.text();
+  } catch (error) {
+    return null;
+  }
 }
 
 /**
- * Workers 主入口
+ * Set CORS headers
+ */
+function setCorsHeaders(): Headers {
+  const headers = new Headers();
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
+  headers.set('Access-Control-Max-Age', '86400');
+  return headers;
+}
+
+/**
+ * Create error response
+ */
+function createErrorResponse(statusCode: number, message: string, corsEnabled: boolean = true): Response {
+  const errorType = getErrorType(statusCode);
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache'
+  });
+
+  if (corsEnabled) {
+    const corsHeaders = setCorsHeaders();
+    corsHeaders.forEach((value, key) => {
+      headers.set(key, value);
+    });
+  }
+
+  return new Response(
+    JSON.stringify({
+      type: 'error',
+      error: {
+        type: errorType,
+        message: message
+      }
+    }),
+    {
+      status: statusCode,
+      headers
+    }
+  );
+}
+
+/**
+ * Get error type based on status code
+ */
+function getErrorType(statusCode: number): string {
+  switch (statusCode) {
+    case 400: return 'invalid_request_error';
+    case 401: return 'authentication_error';
+    case 403: return 'permission_error';
+    case 404: return 'not_found_error';
+    case 429: return 'rate_limit_error';
+    case 500: return 'api_error';
+    default: return 'api_error';
+  }
+}
+
+/**
+ * Main request handler
  */
 export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<Response> {
-    const origin = request.headers.get('Origin');
-    const corsHeaders = createCorsHeaders(origin, env);
-
-    // 处理 OPTIONS 请求
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders
-      });
-    }
-
-    // 验证请求方法
-    if (request.method !== 'POST') {
-      return new Response(JSON.stringify({
-        error: 'Method not allowed',
-        message: 'Only POST method is supported'
-      }), {
-        status: 405,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
-    }
-
-    // 创建请求处理器
-    const handler = new RequestHandler(env.KV);
-
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      // 处理请求
-      const response = await handler.handleRequest(request, ctx);
+      const url = new URL(request.url);
+      const method = request.method;
+      const pathname = url.pathname;
 
-      // 添加 CORS 头到响应
-      const newHeaders = new Headers(response.headers);
-      Object.entries(corsHeaders).forEach(([key, value]) => {
-        newHeaders.set(key, value as string);
+      console.log(`[Worker] ${method} ${pathname}`);
+
+      // Get config from environment
+      const corsEnabled = env.CORS_ENABLED !== 'false';
+
+      // Handle CORS preflight
+      if (method === 'OPTIONS') {
+        console.log('[Worker] Handling CORS preflight');
+        const headers = setCorsHeaders();
+        return new Response(null, { status: 204, headers });
+      }
+
+      // Health check endpoint
+      if (method === 'GET' && pathname === '/health') {
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        if (corsEnabled) {
+          const corsHeaders = setCorsHeaders();
+          corsHeaders.forEach((value, key) => {
+            headers.set(key, value);
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            environment: 'cloudflare-workers'
+          }),
+          { status: 200, headers }
+        );
+      }
+
+      // Parse request body
+      const body = await parseBody(request);
+
+      // Create request context
+      const headers: Record<string, string> = {};
+      request.headers.forEach((value, key) => {
+        headers[key] = value;
       });
 
-      // 定期清理冷却记录（异步）
-      ctx.waitUntil(
-        new Promise(resolve => {
-          setTimeout(() => {
-            KeyBalancer.cleanup();
-            resolve(undefined);
-          }, 300000); // 5分钟清理一次
-        })
-      );
+      const context = {
+        method,
+        url: request.url,
+        pathname,
+        query: url.searchParams,
+        headers,
+        body
+      };
 
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: newHeaders
+      // Initialize request handler
+      const handler = new RequestHandler({
+        enableValidation: env.ENABLE_VALIDATION !== 'false',
+        enableLogging: env.ENABLE_LOGGING !== 'false',
+        env,
+        ctx
       });
+
+      // Test stream endpoint (for debugging)
+      if (method === 'GET' && pathname === '/test-stream') {
+        const streamManager = new StreamManager();
+        const testStream = streamManager.createTestStream();
+
+        return new Response(testStream, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'X-Accel-Buffering': 'no'
+          }
+        });
+      }
+
+      // Claude API compatibility endpoints
+      if (method === 'POST' && pathname === '/v1/messages') {
+        return await handler.handleMessagesRequest(context, request);
+      }
+
+      if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
+        return await handler.handleCountTokensRequest(context, request);
+      }
+
+      // 404 for unknown endpoints
+      return createErrorResponse(404, 'Not Found', corsEnabled);
 
     } catch (error) {
       console.error('Worker error:', error);
-
-      return new Response(JSON.stringify({
-        error: 'Worker error',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
+      return createErrorResponse(500, 'Internal Server Error');
     }
   }
 };

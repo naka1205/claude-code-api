@@ -1,187 +1,188 @@
 /**
  * 通用类型定义
- * 包含错误处理、验证、配置和测试相关的类型定义
+ * 包含错误、配置、测试等公共类型
  */
 
-// 错误代码枚举
-export enum ErrorCode {
-  VALIDATION_ERROR = 'VALIDATION_ERROR',
-  TRANSFORMATION_ERROR = 'TRANSFORMATION_ERROR',
-  API_ERROR = 'API_ERROR',
-  NETWORK_ERROR = 'NETWORK_ERROR',
-  TIMEOUT_ERROR = 'TIMEOUT_ERROR',
-  AUTHENTICATION_ERROR = 'AUTHENTICATION_ERROR',
-  RATE_LIMIT_ERROR = 'RATE_LIMIT_ERROR',
-  MODEL_NOT_FOUND = 'MODEL_NOT_FOUND',
-  INVALID_REQUEST = 'INVALID_REQUEST'
-}
+/**
+ * API 提供商类型
+ */
+export type ApiProvider = 'claude' | 'gemini';
 
-// 验证错误接口
-export interface ValidationError {
-  field: string;
-  message: string;
-  code: string;
-  value?: any;
-}
-
-// API错误接口
+/**
+ * API 错误类型
+ */
 export interface ApiError {
-  code: ErrorCode;
+  code: string;
   message: string;
   details?: any;
-  statusCode: number;
-  timestamp?: string;
+  statusCode?: number;
 }
 
-// Claude错误响应格式
-export interface ClaudeErrorResponse {
-  type: 'error';
-  error: {
-    type: string;
-    message: string;
-    details?: any;
-  };
+/**
+ * 转换错误类
+ */
+export class TransformationError extends Error {
+  public code: string;
+  public details?: any;
+
+  constructor(message: string, code: string = 'TRANSFORMATION_ERROR', details?: any) {
+    super(message);
+    this.name = 'TransformationError';
+    this.code = code;
+    this.details = details;
+  }
 }
 
-// 服务器配置接口
-export interface ServerConfig {
-  port: number;
-  host: string;
+/**
+ * 验证错误类
+ */
+export class ValidationError extends Error {
+  public code: string;
+  public field?: string;
+  public details?: any;
+
+  constructor(message: string, field?: string, details?: any) {
+    super(message);
+    this.name = 'ValidationError';
+    this.code = 'VALIDATION_ERROR';
+    this.field = field;
+    this.details = details;
+  }
+}
+
+/**
+ * API 客户端错误类
+ */
+export class ApiClientError extends Error {
+  public statusCode: number;
+  public code: string;
+  public details?: any;
+
+  constructor(message: string, statusCode: number, code: string = 'API_ERROR', details?: any) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+/**
+ * 流式响应处理器接口
+ */
+export interface StreamHandler {
+  onData(chunk: any): void;
+  onError(error: Error): void;
+  onComplete(): void;
+}
+
+/**
+ * 重试配置
+ */
+export interface RetryConfig {
+  maxRetries: number;
+  initialDelay: number;
+  maxDelay: number;
+  backoffMultiplier: number;
+}
+
+/**
+ * 请求选项
+ */
+export interface RequestOptions {
   timeout?: number;
-  maxRequestSize?: number;
+  headers?: Record<string, string>;
+  retryConfig?: RetryConfig;
 }
 
-// Gemini API配置
-export interface GeminiConfig {
-  baseUrl: string;
-  apiVersion: string;
-  timeout: number;
-}
-
-// 日志配置
-export interface LoggingConfig {
-  level: 'debug' | 'info' | 'warn' | 'error';
-  enableConsole: boolean;
-  enableFile?: boolean;
-  logFile?: string;
-}
-
-// 主配置接口
-export interface Config {
-  server: ServerConfig;
-  gemini: GeminiConfig;
-  logging: LoggingConfig;
-  apiKey?: string;
-  enableCors?: boolean;
-  enableRequestLogging?: boolean;
-}
-
-// 测试用例接口
-export interface TestCase {
-  name: string;
-  description?: string;
-  input: any;
-  expected: any;
-  setup?: () => void | Promise<void>;
-  teardown?: () => void | Promise<void>;
-  timeout?: number;
-}
-
-// 测试套件接口
-export interface TestSuite {
-  name: string;
-  description?: string;
-  testCases: TestCase[];
-  beforeAll?: () => void | Promise<void>;
-  afterAll?: () => void | Promise<void>;
-  beforeEach?: () => void | Promise<void>;
-  afterEach?: () => void | Promise<void>;
-}
-
-// 测试结果接口
-export interface TestResult {
-  name: string;
-  passed: boolean;
-  error?: Error;
-  duration: number;
-  skipped?: boolean;
-}
-
-// 测试套件结果接口
-export interface TestSuiteResult {
-  name: string;
-  results: TestResult[];
-  totalTests: number;
-  passedTests: number;
-  failedTests: number;
-  skippedTests: number;
-  duration: number;
-}
-
-// HTTP方法枚举
-export enum HttpMethod {
-  GET = 'GET',
-  POST = 'POST',
-  PUT = 'PUT',
-  DELETE = 'DELETE',
-  PATCH = 'PATCH',
-  OPTIONS = 'OPTIONS',
-  HEAD = 'HEAD'
-}
-
-// HTTP状态码枚举
-export enum HttpStatusCode {
-  OK = 200,
-  CREATED = 201,
-  NO_CONTENT = 204,
-  BAD_REQUEST = 400,
-  UNAUTHORIZED = 401,
-  FORBIDDEN = 403,
-  NOT_FOUND = 404,
-  METHOD_NOT_ALLOWED = 405,
-  CONFLICT = 409,
-  UNPROCESSABLE_ENTITY = 422,
-  TOO_MANY_REQUESTS = 429,
-  INTERNAL_SERVER_ERROR = 500,
-  BAD_GATEWAY = 502,
-  SERVICE_UNAVAILABLE = 503,
-  GATEWAY_TIMEOUT = 504
-}
-
-// 请求上下文接口
-export interface RequestContext {
-  requestId: string;
-  timestamp: number;
-  userAgent?: string;
-  clientIp?: string;
-  apiKey?: string;
-}
-
-// 响应元数据接口
+/**
+ * 响应元数据
+ */
 export interface ResponseMetadata {
-  requestId: string;
-  processingTime: number;
-  model: string;
-  tokensUsed: {
-    input: number;
-    output: number;
-    total: number;
-  };
+  requestId?: string;
+  latency?: number;
+  retryCount?: number;
+  provider: ApiProvider;
+  model?: string;
 }
 
-export interface ModelCapabilities {
-  /** 是否支持Extended Thinking功能 */
-  supportsThinking: boolean;
-  /** 是否支持视觉/图像输入 */
-  supportsVision: boolean;
-  /** 最大输入token数量 */
-  maxInputTokens: number;
-  /** 最大输出token数量 */
-  maxOutputTokens: number;
-  /** 是否支持工具调用 */
-  supportsTools: boolean;
-  /** 是否支持流式响应 */
-  supportsStreaming: boolean;
-  /** 模型类别 */
-  category: 'pro' | 'flash' | 'lite';
+/**
+ * 转换上下文
+ */
+export interface TransformContext {
+  provider: ApiProvider;
+  model?: string;
+  stream?: boolean;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * 测试配置
+ */
+export interface TestConfig {
+  provider: ApiProvider;
+  apiKey?: string;
+  baseUrl?: string;
+  timeout?: number;
+  debug?: boolean;
+}
+
+/**
+ * 测试结果
+ */
+export interface TestResult {
+  success: boolean;
+  duration: number;
+  error?: Error;
+  response?: any;
+  metadata?: ResponseMetadata;
+}
+
+/**
+ * 性能指标
+ */
+export interface PerformanceMetrics {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  averageLatency: number;
+  p95Latency: number;
+  p99Latency: number;
+}
+
+/**
+ * 缓存配置
+ */
+export interface CacheConfig {
+  enabled: boolean;
+  ttl: number;
+  maxSize: number;
+  strategy: 'lru' | 'fifo' | 'lfu';
+}
+
+/**
+ * 缓存项
+ */
+export interface CacheItem<T = any> {
+  key: string;
+  value: T;
+  timestamp: number;
+  ttl: number;
+  hits: number;
+}
+
+/**
+ * 日志级别
+ */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * 日志条目
+ */
+export interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+  context?: Record<string, any>;
+  error?: Error;
 }
