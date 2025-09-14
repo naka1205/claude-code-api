@@ -6,6 +6,7 @@
 import { RequestHandler } from './handler';
 import { StreamManager } from './handler/stream-manager';
 import { Config } from './config';
+import { logger } from './middlewares/logger';
 
 export interface Env {
   KV?: KVNamespace;  // Make KV optional
@@ -102,7 +103,28 @@ export default {
       const method = request.method;
       const pathname = url.pathname;
 
-      console.log(`[Worker] ${method} ${pathname}`);
+      // 设置请求ID
+      const requestId = `req_${Math.random().toString(36).substr(2, 9)}`;
+      logger.setRequestId(requestId);
+
+      console.log(`[Worker] ${method} ${pathname} - RequestID: ${requestId}`);
+      // Convert URLSearchParams and Headers for Workers environment
+      const queryParams: Record<string, string> = {};
+      url.searchParams.forEach((value, key) => {
+        queryParams[key] = value;
+      });
+
+      const headerObj: Record<string, string> = {};
+      request.headers.forEach((value, key) => {
+        headerObj[key] = value;
+      });
+
+      logger.info('Request received', {
+        method,
+        pathname,
+        query: queryParams,
+        headers: logger.sanitizeHeaders(headerObj)
+      });
 
       // Get config from environment
       const corsEnabled = env.CORS_ENABLED !== 'false';
@@ -159,36 +181,26 @@ export default {
         ctx
       });
 
-      // Test stream endpoint (for debugging)
-      if (method === 'GET' && pathname === '/test-stream') {
-        const streamManager = new StreamManager();
-        const testStream = streamManager.createTestStream();
-
-        return new Response(testStream, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
-            'X-Accel-Buffering': 'no'
-          }
-        });
-      }
-
       // Claude API compatibility endpoints
       if (method === 'POST' && pathname === '/v1/messages') {
-        return await handler.handleMessagesRequest(context, request);
+        logger.info('Handling messages endpoint');
+        return await handler.handleMessagesRequest(context, request, requestId);
       }
 
       if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
-        return await handler.handleCountTokensRequest(context, request);
+        logger.info('Handling count-tokens endpoint');
+        return await handler.handleCountTokensRequest(context, request, requestId);
       }
 
       // 404 for unknown endpoints
+      logger.warn('Unknown endpoint', { pathname });
       return createErrorResponse(404, 'Not Found', corsEnabled);
 
     } catch (error) {
+      logger.error('Worker error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
       console.error('Worker error:', error);
       return createErrorResponse(500, 'Internal Server Error');
     }

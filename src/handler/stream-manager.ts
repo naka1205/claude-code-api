@@ -4,6 +4,7 @@
  */
 
 import { StreamTransformer } from '../transformers/stream-transformer';
+import { logger } from '../middlewares/logger';
 
 export class StreamManager {
   /**
@@ -12,13 +13,19 @@ export class StreamManager {
   handleStreamResponse(
     stream: ReadableStream,
     claudeModel: string,
-    headers: Record<string, string>
+    headers: Record<string, string>,
+    exposeThinkingToClient: boolean = false
   ): Response {
     try {
       console.log('[StreamManager] Starting stream transformation for model:', claudeModel);
+      console.log('[StreamManager] ExposeThinking:', exposeThinkingToClient);
+      logger.stream('start', {
+        model: claudeModel,
+        exposeThinking: exposeThinkingToClient
+      });
 
       // 创建转换后的流
-      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel);
+      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient);
 
       // 添加一个额外的转换器来确保正确的SSE格式
       const sseStream = this.ensureSSEFormat(transformedStream);
@@ -33,8 +40,10 @@ export class StreamManager {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
+          'Access-Control-Allow-Credentials': 'true',
           'X-Accel-Buffering': 'no', // 禁用Nginx缓冲
-          'X-Content-Type-Options': 'nosniff'
+          'X-Content-Type-Options': 'nosniff',
+          'Transfer-Encoding': 'chunked'
         }
       });
 

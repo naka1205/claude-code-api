@@ -6,7 +6,7 @@
 /**
  * Gemini 消息角色
  */
-export type GeminiRole = 'user' | 'model' | 'system';
+export type GeminiRole = 'user' | 'model' | 'system' | 'tool';
 
 /**
  * Gemini 文本部分
@@ -104,6 +104,10 @@ export interface GeminiFunctionDeclaration {
  */
 export interface GeminiTool {
   functionDeclarations?: GeminiFunctionDeclaration[];
+  google_search?: Record<string, any>;
+  codeExecution?: {
+    languages?: string[];
+  };
 }
 
 /**

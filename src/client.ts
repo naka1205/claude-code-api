@@ -3,6 +3,8 @@
  * 使用Fetch API处理对Gemini API的HTTP调用
  */
 
+import { logger } from './middlewares/logger';
+
 /**
  * API客户端配置
  */
@@ -63,7 +65,11 @@ export class GeminiApiClient {
 
     // 记录使用的API密钥（隐藏敏感信息）
     const maskedKey = selectedKey.length > 8 ? `${selectedKey.substring(0, 8)}***` : '***';
-    console.log(`[Gemini API] Using API key ${randomIndex + 1}/${this.apiKeys.length}: ${maskedKey}`);
+    logger.debug('Using API key', {
+      keyIndex: randomIndex + 1,
+      totalKeys: this.apiKeys.length,
+      maskedKey
+    });
 
     return selectedKey;
   }
@@ -87,9 +93,18 @@ export class GeminiApiClient {
       url.searchParams.set('alt', 'sse');
     }
 
+    // 添加请求体大小日志
+    const requestBody = JSON.stringify(data);
+
     // Log the full URL (masking API key)
     const logUrl = url.toString().replace(apiKey, apiKey.substring(0, 8) + '***');
-    console.log(`[Gemini API] Sending request to: ${logUrl}`);
+    logger.gemini('request', endpoint, {
+      url: logUrl,
+      isStream,
+      requestSize: requestBody.length,
+      hasTools: data.tools?.length > 0,
+      toolCount: data.tools?.length || 0
+    });
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -102,7 +117,7 @@ export class GeminiApiClient {
           'User-Agent': 'gemini-code/2.0.0-workers',
           ...(isStream && { 'Accept': 'text/event-stream' })
         },
-        body: JSON.stringify(data),
+        body: requestBody,
         signal: controller.signal
       });
 
@@ -113,10 +128,32 @@ export class GeminiApiClient {
         headers[key] = value;
       });
 
+      // 详细日志响应状态
+      logger.gemini('response', endpoint, {
+        statusCode: response.status,
+        headers,
+        isStream
+      });
+
       // Log error responses from Gemini API
       if (response.status >= 400) {
         const errorText = await response.text();
-        console.error(`[Gemini API] Error response (${response.status}):`, errorText);
+        logger.error('Gemini API error response', {
+          statusCode: response.status,
+          errorText: logger.truncate(errorText, 500)
+        });
+
+        // Log request details that caused the error
+        if (data.tools && data.tools.length > 0) {
+          logger.error('Error request had tools', {
+            tools: data.tools.map((t: any) => {
+              if (t.functionDeclarations) return `functions(${t.functionDeclarations.length})`;
+              if (t.google_search) return 'google_search';
+              if (t.codeExecution) return 'codeExecution';
+              return 'unknown';
+            })
+          });
+        }
 
         // Try to parse as JSON
         let errorBody;
@@ -135,13 +172,16 @@ export class GeminiApiClient {
       }
 
       if (isStream && response.body) {
+        logger.info('Returning stream response');
         return {
           statusCode: response.status,
           headers,
           stream: response.body
         } as StreamResponse;
       } else {
+        logger.debug('Parsing JSON response');
         const body = await response.json();
+        logger.debug('Response body received', { bodyKeys: body && typeof body === 'object' ? Object.keys(body) : [] });
         return {
           statusCode: response.status,
           headers,

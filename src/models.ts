@@ -14,6 +14,7 @@ export interface ModelCapabilities {
   supportsSystemMessage: boolean;
   supportsCaching: boolean;
   supportsStreaming: boolean;
+  supportsThinking?: boolean;
   contextWindow: number;
 }
 
@@ -25,6 +26,11 @@ export interface ModelMapping {
   target: string;
   capabilities: ModelCapabilities;
 }
+
+/**
+ * 默认Gemini模型
+ */
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 /**
  * Claude到Gemini的模型映射表
@@ -51,6 +57,7 @@ export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     supportsSystemMessage: true,
     supportsCaching: true,
     supportsStreaming: true,
+    supportsThinking: true,
     contextWindow: 1000000
   },
   'gemini-2.5-flash': {
@@ -61,6 +68,7 @@ export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     supportsSystemMessage: true,
     supportsCaching: true,
     supportsStreaming: true,
+    supportsThinking: true,
     contextWindow: 1000000
   },
   'gemini-2.5-flash-lite': {
@@ -71,6 +79,7 @@ export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     supportsSystemMessage: true,
     supportsCaching: false,
     supportsStreaming: true,
+    supportsThinking: false,
     contextWindow: 1000000
   },
   'gemini-2.0-flash': {
@@ -81,6 +90,7 @@ export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     supportsSystemMessage: true,
     supportsCaching: false,
     supportsStreaming: true,
+    supportsThinking: false,
     contextWindow: 32768
   }
 };
@@ -134,7 +144,7 @@ export class ModelMapper {
 
     // 返回默认模型
     console.warn(`Unknown Claude model: ${claudeModel}, using default mapping`);
-    return MODEL_MAPPING['default'];
+    return DEFAULT_GEMINI_MODEL;
   }
 
   /**

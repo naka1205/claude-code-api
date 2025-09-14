@@ -78,6 +78,7 @@ export interface ClaudeTool {
     properties?: Record<string, any>;
     required?: string[];
   };
+  type?: string; // For official tools like 'web_search_20250305'
 }
 
 /**
@@ -90,6 +91,25 @@ export interface ClaudeMetadata {
 /**
  * Claude 请求
  */
+/**
+ * Claude 工具选择类型
+ */
+export type ClaudeToolChoice =
+  | 'auto'
+  | 'none'
+  | 'any'
+  | 'required'
+  | {
+      type: 'auto' | 'any' | 'tool' | 'none';
+      name?: string;
+    };
+
+export interface ClaudeThinking {
+  type: 'enabled' | 'disabled';
+  expose_to_client?: boolean;
+  budget?: number;
+}
+
 export interface ClaudeRequest {
   model: string;
   messages: ClaudeMessage[];
@@ -100,12 +120,14 @@ export interface ClaudeRequest {
   system?: string | ClaudeSystemMessage[];
   temperature?: number;
   tools?: ClaudeTool[];
-  tool_choice?: {
-    type: 'auto' | 'any' | 'tool';
-    name?: string;
-  };
+  tool_choice?: ClaudeToolChoice;
   top_p?: number;
   top_k?: number;
+  thinking?: ClaudeThinking;
+  // Claude特有参数
+  'anthropic-version'?: string;
+  'anthropic-beta'?: string[];
+  type?: string; // For official tools
 }
 
 /**
@@ -127,9 +149,19 @@ export interface ClaudeTextBlock {
 }
 
 /**
+ * Claude 工具结果响应
+ */
+export interface ClaudeToolResult {
+  type: 'tool_result';
+  tool_use_id: string;
+  content?: string;
+  is_error?: boolean;
+}
+
+/**
  * Claude 响应内容块
  */
-export type ClaudeContentBlock = ClaudeTextBlock | ClaudeToolUse;
+export type ClaudeContentBlock = ClaudeTextBlock | ClaudeToolUse | ClaudeToolResult;
 
 /**
  * Claude 响应

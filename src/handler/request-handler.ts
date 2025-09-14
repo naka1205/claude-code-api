@@ -9,8 +9,12 @@ import { RequestTransformer } from '../transformers/request-transformer';
 import { ResponseTransformer } from '../transformers/response-transformer';
 import { StreamManager } from './stream-manager';
 import { ClientManager } from './client-manager';
+import { ThinkingTransformer } from '../transformers/thinking-transformer';
+import { logger, createRequestLogger } from '../middlewares/logger';
+import { ErrorHandler } from '../middlewares/error';
 import { ResponseManager } from './response-manager';
 import { ApiKeyManager } from './api-key-manager';
+import { KeyUsageCache } from './key-usage-cache';
 import { ApiResponse } from '../client';
 
 export interface HandlerConfig {
@@ -18,6 +22,7 @@ export interface HandlerConfig {
   enableLogging: boolean;
   env?: any;
   ctx?: any;
+  kv?: KVNamespace;
 }
 
 export interface RequestContext {
@@ -49,8 +54,20 @@ export class RequestHandler {
   /**
    * 处理消息请求
    */
-  async handleMessagesRequest(context: RequestContext, request: Request): Promise<Response> {
+  async handleMessagesRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
+    const finalRequestId = requestId || `req_${Math.random().toString(36).substr(2, 9)}`;
+    const requestLogger = createRequestLogger(finalRequestId);
+    logger.setRequestId(finalRequestId);
+    const startTime = Date.now();
+
     try {
+      // 记录请求详情
+      logger.request(context.method, context.url, context.headers, context.body);
+
+      // 记录请求参数摘要
+      if (this.config.enableLogging) {
+        this.logRequestSummary(context.body as ClaudeRequest, requestLogger);
+      }
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
       if (!apiKeys || apiKeys.length === 0) {
@@ -61,48 +78,156 @@ export class RequestHandler {
       if (this.config.enableValidation) {
         const validationError = this.validator.validateClaudeRequest(context.body);
         if (validationError) {
+          logger.validation(false, [validationError], finalRequestId);
           return this.responseManager.createErrorResponse(400, validationError);
         }
+        logger.validation(true, undefined, finalRequestId);
       }
 
       const claudeRequest = context.body as ClaudeRequest;
 
-      // 3. 转换请求
-      const geminiRequest = await RequestTransformer.transformRequest(claudeRequest);
+      // 3. 选择最佳API密钥
+      const geminiModel = this.getGeminiModel(claudeRequest.model);
+      const selectedKey = await KeyUsageCache.pickBestKey(
+        apiKeys,
+        geminiModel,
+        this.config.kv
+      );
 
-      // 4. 创建客户端
-      const client = this.clientManager.createClient(apiKeys);
+      if (!selectedKey) {
+        return this.responseManager.createErrorResponse(429, 'No available API keys');
+      }
 
-      // 5. 确定端点
+      // 记录密钥使用
+      await KeyUsageCache.reserve(selectedKey, this.config.kv);
+
+      if (this.config.enableLogging) {
+        requestLogger.info('Using API key', {
+          keyIndex: apiKeys.indexOf(selectedKey) + 1,
+          totalKeys: apiKeys.length,
+          maskedKey: selectedKey.substring(0, 11) + '***'
+        });
+      }
+
+      // 提取thinking配置
+      let exposeThinkingToClient = false;
+      if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
+        const thinkingConfig = ThinkingTransformer.transformThinking(
+          (claudeRequest as any).thinking,
+          this.getGeminiModel(claudeRequest.model),
+          claudeRequest
+        );
+        exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
+      }
+
+      // 4. 转换请求
+      const transformOptions = {
+        enableSpecialToolHandling: false,
+        maxOutputTokens: claudeRequest.max_tokens,
+        safeOutputTokenLimiting: true
+      };
+
+      const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
+      const geminiRequest = transformResult.request;
+
+      logger.transformation('request', claudeRequest.model, geminiModel, finalRequestId);
+
+      if (this.config.enableLogging) {
+        this.logTransformedRequest(geminiRequest, requestLogger);
+      }
+
+      // 添加调试日志
+      if (claudeRequest.tools && claudeRequest.tools.length > 0) {
+        console.log(`[Request] Contains ${claudeRequest.tools.length} tools`);
+      }
+      if (geminiRequest.tools && geminiRequest.tools.length > 0) {
+        console.log(`[Request] Transformed to ${geminiRequest.tools.length} Gemini tools`);
+      }
+
+      // 记录警告信息
+      if (transformResult.warnings && transformResult.warnings.length > 0) {
+        transformResult.warnings.forEach(warning => {
+          requestLogger.warn(`Transform Warning - ${warning.type}: ${warning.message}`);
+        });
+      }
+
+      // 5. 创建客户端（使用选定的密钥）
+      const client = this.clientManager.createClient([selectedKey]);
+
+      // 6. 确定端点
       const endpoint = this.getGeminiEndpoint(claudeRequest.model, claudeRequest.stream);
+      logger.apiCall(endpoint, 'POST', finalRequestId);
 
-      // 6. 发送请求
-      if (claudeRequest.stream) {
-        // 流式响应
-        const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
+      // 7. 发送请求 - 添加更好的错误处理
+      try {
+        if (claudeRequest.stream) {
+          // 流式响应
+          console.log('[RequestHandler] Sending stream request to:', endpoint);
+          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
 
-        if ('stream' in streamResponse) {
-          return this.streamManager.handleStreamResponse(
-            streamResponse.stream,
-            claudeRequest.model,
-            streamResponse.headers
-          );
+          const duration = Date.now() - startTime;
+          logger.apiResponse(endpoint, 200, duration, finalRequestId);
+
+          if ('stream' in streamResponse) {
+            return this.streamManager.handleStreamResponse(
+              streamResponse.stream,
+              claudeRequest.model,
+              streamResponse.headers,
+              exposeThinkingToClient
+            );
+          } else {
+            // 非流式错误响应 - 直接转换错误格式返回
+            if ((streamResponse as any).statusCode >= 400) {
+              await KeyUsageCache.onError(selectedKey, (streamResponse as any).statusCode, this.config.kv);
+            }
+            return await this.responseManager.handleGeminiResponse({
+              statusCode: (streamResponse as any).statusCode,
+              headers: (streamResponse as any).headers,
+              body: (streamResponse as any).body || {},
+              isStream: false
+            }, claudeRequest.model);
+          }
         } else {
-          // 非流式错误响应
-          return this.responseManager.handleGeminiResponse({
-            statusCode: (streamResponse as any).statusCode,
-            headers: (streamResponse as any).headers,
-            body: (streamResponse as any).body || {},
-            isStream: false
-          }, claudeRequest.model);
+          // 非流式响应
+          console.log('[RequestHandler] Sending non-stream request to:', endpoint);
+          const response = await client.sendRequest(endpoint, geminiRequest, false);
+
+          const duration = Date.now() - startTime;
+          logger.apiResponse(endpoint, (response as ApiResponse).statusCode, duration, finalRequestId);
+
+          // 错误处理 - 记录密钥错误状态
+          if ((response as ApiResponse).statusCode >= 400) {
+            await KeyUsageCache.onError(selectedKey, (response as ApiResponse).statusCode, this.config.kv);
+          }
+
+          return await this.responseManager.handleGeminiResponse(
+            response as ApiResponse,
+            claudeRequest.model,
+            exposeThinkingToClient
+          );
         }
-      } else {
-        // 非流式响应
-        const response = await client.sendRequest(endpoint, geminiRequest, false);
-        return this.responseManager.handleGeminiResponse(response as ApiResponse, claudeRequest.model);
+      } catch (networkError) {
+        // 网络错误 - 记录并直接返回错误
+        await KeyUsageCache.onError(selectedKey, 500, this.config.kv);
+        console.error('Network error calling Gemini API:', networkError);
+        return this.responseManager.createErrorResponse(
+          502,
+          `Failed to connect to Gemini API: ${networkError instanceof Error ? networkError.message : 'Network error'}`
+        );
+      }
+
+      // 记录请求完成统计
+      if (this.config.enableLogging) {
+        const duration = Date.now() - startTime;
+        requestLogger.info('Request completed', {
+          duration,
+          stream: !!claudeRequest.stream,
+          model: claudeRequest.model
+        });
       }
 
     } catch (error) {
+      requestLogger.error('Request handling error', error);
       console.error('Request handling error:', error);
       return this.responseManager.createErrorResponse(
         500,
@@ -114,7 +239,10 @@ export class RequestHandler {
   /**
    * 处理token计数请求
    */
-  async handleCountTokensRequest(context: RequestContext, request: Request): Promise<Response> {
+  async handleCountTokensRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
+    const finalRequestId = requestId || `req_${Math.random().toString(36).substr(2, 9)}`;
+    logger.setRequestId(finalRequestId);
+
     try {
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
@@ -132,20 +260,32 @@ export class RequestHandler {
 
       const countRequest = context.body as ClaudeCountRequest;
 
-      // 3. 转换为Gemini格式（用于计数）
-      const geminiRequest = await RequestTransformer.transformRequest({
+      // 3. 选择最佳API密钥
+      const selectedKey = await KeyUsageCache.pickBestKey(
+        apiKeys,
+        this.getGeminiModel(countRequest.model),
+        this.config.kv
+      );
+
+      if (!selectedKey) {
+        return this.responseManager.createErrorResponse(429, 'No available API keys');
+      }
+
+      // 4. 转换为Gemini格式（用于计数）
+      const transformResult = await RequestTransformer.transformRequest({
         ...countRequest,
         max_tokens: 1
       } as ClaudeRequest);
+      const geminiRequest = transformResult.request;
 
-      // 4. 创建客户端
-      const client = this.clientManager.createClient(apiKeys);
+      // 5. 创建客户端（使用选定的密钥）
+      const client = this.clientManager.createClient([selectedKey]);
 
-      // 5. 发送计数请求
+      // 6. 发送计数请求
       const endpoint = this.getCountEndpoint(countRequest.model);
       const response = await client.sendRequest(endpoint, geminiRequest, false);
 
-      // 6. 处理响应
+      // 7. 处理响应
       if ('body' in response && response.body) {
         const totalTokens = response.body.totalTokens || 0;
         return new Response(
@@ -172,11 +312,18 @@ export class RequestHandler {
   }
 
   /**
+   * 获取Gemini模型名称
+   */
+  private getGeminiModel(model: string): string {
+    const modelMapper = ModelMapper.getInstance();
+    return modelMapper.mapModel(model);
+  }
+
+  /**
    * 获取Gemini端点
    */
   private getGeminiEndpoint(model: string, isStream?: boolean): string {
-    const modelMapper = ModelMapper.getInstance();
-    const geminiModel = modelMapper.mapModel(model);
+    const geminiModel = this.getGeminiModel(model);
     const action = isStream ? 'streamGenerateContent' : 'generateContent';
     return `/v1beta/models/${geminiModel}:${action}`;
   }
@@ -185,9 +332,61 @@ export class RequestHandler {
    * 获取计数端点
    */
   private getCountEndpoint(model: string): string {
-    const modelMapper = ModelMapper.getInstance();
-    const geminiModel = modelMapper.mapModel(model);
+    const geminiModel = this.getGeminiModel(model);
     return `/v1beta/models/${geminiModel}:countTokens`;
+  }
+
+  /**
+   * 记录请求摘要
+   */
+  private logRequestSummary(claudeRequest: ClaudeRequest, requestLogger: any): void {
+    try {
+      requestLogger.info('Incoming Claude request params', {
+        model: claudeRequest?.model,
+        stream: !!claudeRequest?.stream,
+        max_tokens: claudeRequest?.max_tokens,
+        messages_count: Array.isArray(claudeRequest?.messages) ? claudeRequest.messages.length : 0,
+        tools_count: Array.isArray(claudeRequest?.tools) ? claudeRequest.tools.length : 0,
+        temperature: claudeRequest?.temperature,
+        top_p: claudeRequest?.top_p,
+        top_k: claudeRequest?.top_k,
+        has_thinking: !!(claudeRequest as any)?.thinking
+      });
+    } catch (error) {
+      // 忽略日志记录错误
+    }
+  }
+
+  /**
+   * 记录转换后的请求
+   */
+  private logTransformedRequest(geminiRequest: any, requestLogger: any): void {
+    try {
+      const summary = {
+        contents_count: Array.isArray(geminiRequest?.contents) ? geminiRequest.contents.length : 0,
+        thinking: geminiRequest?.generationConfig?.thinkingConfig ? {
+          includeThoughts: geminiRequest.generationConfig.thinkingConfig.includeThoughts,
+          thinkingBudget: geminiRequest.generationConfig.thinkingConfig.thinkingBudget
+        } : undefined,
+        maxOutputTokens: geminiRequest?.generationConfig?.maxOutputTokens,
+        temperature: geminiRequest?.generationConfig?.temperature,
+        topP: geminiRequest?.generationConfig?.topP,
+        topK: geminiRequest?.generationConfig?.topK,
+        tools_count: Array.isArray(geminiRequest?.tools) ? geminiRequest.tools.length : 0,
+        tool_functions_total: Array.isArray(geminiRequest?.tools)
+          ? geminiRequest.tools.reduce((sum: number, t: any) => sum + (Array.isArray(t.functionDeclarations) ? t.functionDeclarations.length : 0), 0)
+          : 0,
+        tool_names: Array.isArray(geminiRequest?.tools)
+          ? geminiRequest.tools.flatMap((t: any) => Array.isArray(t.functionDeclarations) ? t.functionDeclarations.map((f: any) => f.name) : [])
+          : [],
+        tool_mode: geminiRequest?.toolConfig?.functionCallingConfig?.mode
+      };
+
+      requestLogger.info('Outgoing Gemini request (summary)', summary);
+      requestLogger.debug('Outgoing Gemini request (details)', { geminiRequest });
+    } catch (error) {
+      // 忽略日志记录错误
+    }
   }
 }
 
