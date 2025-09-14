@@ -1,112 +1,167 @@
 /**
- * 模型映射器
- * 处理Claude模型到Gemini模型的映射
+ * 模型映射 - 纯函数实现
+ * Claude到Gemini模型的映射逻辑
+ *
+ * 基于docs/README.md中的"支持的模型与映射"表格
  */
 
 /**
- * 模型能力配置
+ * 模型能力接口
  */
-export interface ModelCapabilities {
-  maxInputTokens: number;
-  maxOutputTokens: number;
+interface ModelCapability {
+  maxTokens: number;
   supportsFunctions: boolean;
-  supportsVision: boolean;
-  supportsSystemMessage: boolean;
-  supportsCaching: boolean;
-  supportsStreaming: boolean;
-  supportsThinking?: boolean;
-  contextWindow: number;
+  supportsSystemInstructions: boolean;
+  supportsTools: boolean;
+  supportsCodeExecution: boolean;
+  supportsGoogleSearch: boolean;
+  supportsJson: boolean;
+  supportsThinking: boolean;
+  contextWindow: string;
+  freeRPM: number;
 }
 
 /**
- * 模型映射配置
+ * Claude到Gemini模型映射表
+ * 仅支持文档中指定的6个模型
  */
-export interface ModelMapping {
-  source: string;
-  target: string;
-  capabilities: ModelCapabilities;
-}
-
-/**
- * 默认Gemini模型
- */
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-
-/**
- * Claude到Gemini的模型映射表
- * 根据相似能力进行映射
- */
-export const MODEL_MAPPING: Record<string, string> = {
+const MODEL_MAPPING: Record<string, string> = {
+  // Claude Opus 4.1 -> Gemini 2.5 Pro (视觉、工具、高级性能)
   'claude-opus-4-1-20250805': 'gemini-2.5-pro',
+
+  // Claude Opus 4 -> Gemini 2.5 Pro (视觉、工具、高级性能)
   'claude-opus-4-20250514': 'gemini-2.5-pro',
+
+  // Claude Sonnet 4 -> Gemini 2.5 Flash (视觉、工具、高性能)
   'claude-sonnet-4-20250514': 'gemini-2.5-flash',
-  'claude-3-7-sonnet-20250219': 'gemini-2.5-flash-lite',
+
+  // Claude 3.7 Sonnet -> Gemini 2.5 Flash (视觉、工具、高性能)
+  'claude-3-7-sonnet-20250219': 'gemini-2.5-flash',
+
+  // Claude 3.5 Sonnet -> Gemini 2.5 Flash-Lite (视觉、工具、快速高效)
   'claude-3-5-sonnet-20241022': 'gemini-2.5-flash-lite',
-  'claude-3-5-haiku-20241022': 'gemini-2.0-flash',
+
+  // Claude 3.5 Haiku -> Gemini 2.0 Flash (视觉、工具、快速)
+  'claude-3-5-haiku-20241022': 'gemini-2.0-flash'
 };
 
 /**
  * Gemini模型能力配置
  */
-export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
+const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
   'gemini-2.5-pro': {
-    maxInputTokens: 1000000,
-    maxOutputTokens: 8192,
+    maxTokens: 8192,
     supportsFunctions: true,
-    supportsVision: true,
-    supportsSystemMessage: true,
-    supportsCaching: true,
-    supportsStreaming: true,
+    supportsSystemInstructions: true,
+    supportsTools: true,
+    supportsCodeExecution: true,
+    supportsGoogleSearch: true,
+    supportsJson: true,
     supportsThinking: true,
-    contextWindow: 1000000
+    contextWindow: '2M tokens',
+    freeRPM: 5
   },
   'gemini-2.5-flash': {
-    maxInputTokens: 1000000,
-    maxOutputTokens: 8192,
+    maxTokens: 8192,
     supportsFunctions: true,
-    supportsVision: true,
-    supportsSystemMessage: true,
-    supportsCaching: true,
-    supportsStreaming: true,
+    supportsSystemInstructions: true,
+    supportsTools: true,
+    supportsCodeExecution: true,
+    supportsGoogleSearch: true,
+    supportsJson: true,
     supportsThinking: true,
-    contextWindow: 1000000
+    contextWindow: '1M tokens',
+    freeRPM: 10
   },
   'gemini-2.5-flash-lite': {
-    maxInputTokens: 1000000,
-    maxOutputTokens: 8192,
+    maxTokens: 8192,
     supportsFunctions: true,
-    supportsVision: true,
-    supportsSystemMessage: true,
-    supportsCaching: false,
-    supportsStreaming: true,
-    supportsThinking: false,
-    contextWindow: 1000000
+    supportsSystemInstructions: true,
+    supportsTools: true,
+    supportsCodeExecution: true,
+    supportsGoogleSearch: true,
+    supportsJson: true,
+    supportsThinking: true,
+    contextWindow: '1M tokens',
+    freeRPM: 15
   },
   'gemini-2.0-flash': {
-    maxInputTokens: 32768,
-    maxOutputTokens: 8192,
+    maxTokens: 8192,
     supportsFunctions: true,
-    supportsVision: true,
-    supportsSystemMessage: true,
-    supportsCaching: false,
-    supportsStreaming: true,
+    supportsSystemInstructions: true,
+    supportsTools: true,
+    supportsCodeExecution: false,
+    supportsGoogleSearch: false,
+    supportsJson: true,
     supportsThinking: false,
-    contextWindow: 32768
+    contextWindow: '1M tokens',
+    freeRPM: 30
   }
 };
 
 /**
- * 模型映射器类
+ * 映射Claude模型到Gemini模型
  */
+export function mapModel(claudeModel: string): string {
+  const normalizedModel = claudeModel.toLowerCase().trim();
+  const mappedModel = MODEL_MAPPING[normalizedModel];
+
+  if (!mappedModel) {
+    throw new Error(`Unsupported Claude model: ${claudeModel}. Supported models: ${Object.keys(MODEL_MAPPING).join(', ')}`);
+  }
+
+  return mappedModel;
+}
+
+/**
+ * 获取Gemini模型能力
+ */
+export function getModelCapabilities(geminiModel: string): ModelCapability {
+  const capabilities = GEMINI_MODEL_CAPABILITIES[geminiModel];
+
+  if (!capabilities) {
+    throw new Error(`Unknown Gemini model: ${geminiModel}`);
+  }
+
+  return capabilities;
+}
+
+/**
+ * 检查模型是否支持特定功能
+ */
+export function checkModelSupport(geminiModel: string, feature: keyof ModelCapability): boolean {
+  const capabilities = getModelCapabilities(geminiModel);
+  return capabilities[feature] === true || false;
+}
+
+/**
+ * 获取支持的Claude模型列表
+ */
+export function getSupportedClaudeModels(): string[] {
+  return Object.keys(MODEL_MAPPING);
+}
+
+/**
+ * 获取支持的Gemini模型列表
+ */
+export function getSupportedGeminiModels(): string[] {
+  return Object.keys(GEMINI_MODEL_CAPABILITIES);
+}
+
+/**
+ * 验证Claude模型是否受支持
+ */
+export function isClaudeModelSupported(model: string): boolean {
+  return Object.keys(MODEL_MAPPING).includes(model.toLowerCase().trim());
+}
+
+// 导出常量供其他模块使用
+export { MODEL_MAPPING, GEMINI_MODEL_CAPABILITIES };
+
+// 保持向后兼容的ModelMapper类
 export class ModelMapper {
   private static instance: ModelMapper;
-  private customMappings: Map<string, string> = new Map();
 
-  private constructor() {}
-
-  /**
-   * 获取单例实例
-   */
   static getInstance(): ModelMapper {
     if (!ModelMapper.instance) {
       ModelMapper.instance = new ModelMapper();
@@ -114,92 +169,24 @@ export class ModelMapper {
     return ModelMapper.instance;
   }
 
-  /**
-   * 映射Claude模型到Gemini模型
-   */
   mapModel(claudeModel: string): string {
-    // 检查自定义映射
-    if (this.customMappings.has(claudeModel)) {
-      return this.customMappings.get(claudeModel)!;
-    }
-
-    // 检查预定义映射
-    if (MODEL_MAPPING[claudeModel]) {
-      return MODEL_MAPPING[claudeModel];
-    }
-
-    // 智能匹配：基于模型名称模式
-    if (claudeModel.includes('opus')) {
-      return 'gemini-2.5-pro';
-    }
-    if (claudeModel.includes('sonnet')) {
-      return 'gemini-2.5-flash';
-    }
-    if (claudeModel.includes('haiku')) {
-      return 'gemini-2.5-flash-lite';
-    }
-    if (claudeModel.includes('instant')) {
-      return 'gemini-2.5-flash-lite';
-    }
-
-    // 返回默认模型
-    console.warn(`Unknown Claude model: ${claudeModel}, using default mapping`);
-    return DEFAULT_GEMINI_MODEL;
+    return mapModel(claudeModel);
   }
 
-  /**
-   * 获取模型能力
-   */
-  getModelCapabilities(model: string): ModelCapabilities {
-    // 先尝试映射Claude模型
-    const geminiModel = this.mapModel(model);
-
-    if (GEMINI_MODEL_CAPABILITIES[geminiModel]) {
-      return GEMINI_MODEL_CAPABILITIES[geminiModel];
-    }
-
-    // 返回默认能力配置
-    return GEMINI_MODEL_CAPABILITIES['gemini-2.5-flash'];
+  getModelCapabilities(geminiModel: string): ModelCapability {
+    return getModelCapabilities(geminiModel);
   }
 
-  /**
-   * 添加自定义模型映射
-   */
-  addCustomMapping(claudeModel: string, geminiModel: string): void {
-    this.customMappings.set(claudeModel, geminiModel);
+  checkModelSupport(geminiModel: string, feature: keyof ModelCapability): boolean {
+    return checkModelSupport(geminiModel, feature);
   }
 
-  /**
-   * 移除自定义模型映射
-   */
-  removeCustomMapping(claudeModel: string): void {
-    this.customMappings.delete(claudeModel);
-  }
-
-  /**
-   * 获取所有映射
-   */
-  getAllMappings(): Record<string, string> {
-    const allMappings = { ...MODEL_MAPPING };
-    this.customMappings.forEach((value, key) => {
-      allMappings[key] = value;
-    });
-    return allMappings;
-  }
-
-  /**
-   * 验证Gemini模型是否支持特定功能
-   */
-  validateModelSupport(model: string, feature: keyof ModelCapabilities): boolean {
-    const capabilities = this.getModelCapabilities(model);
-    return capabilities[feature] as boolean;
-  }
-
-  /**
-   * 获取推荐的最大输出token数
-   */
-  getRecommendedMaxTokens(claudeModel: string, requestedTokens: number): number {
-    const capabilities = this.getModelCapabilities(claudeModel);
-    return Math.min(requestedTokens, capabilities.maxOutputTokens);
+  getRecommendedMaxTokens(geminiModel: string): number {
+    const capabilities = getModelCapabilities(geminiModel);
+    return capabilities.maxTokens || 8192;
   }
 }
+
+// 导出类型
+export type { ModelCapability };
+export type ModelCapabilities = ModelCapability; // 向后兼容

@@ -3,6 +3,8 @@
  * 处理API密钥的提取和管理
  */
 
+import { API_KEY } from '../utils/constants';
+
 export class ApiKeyManager {
   /**
    * 从请求头中提取API密钥
@@ -11,7 +13,7 @@ export class ApiKeyManager {
     const keys: string[] = [];
 
     // 从Authorization头提取
-    const authHeader = headers['authorization'] || headers['Authorization'];
+    const authHeader = headers[API_KEY.ALT_HEADER_NAME] || headers['Authorization'];
     if (authHeader) {
       if (authHeader.startsWith('Bearer ')) {
         const keyString = authHeader.substring(7).trim();
@@ -28,7 +30,7 @@ export class ApiKeyManager {
     }
 
     // 从x-api-key头提取
-    const apiKeyHeader = headers['x-api-key'] || headers['X-API-Key'] || headers['X-Api-Key'];
+    const apiKeyHeader = headers[API_KEY.HEADER_NAME] || headers['X-API-Key'] || headers['X-Api-Key'];
     if (apiKeyHeader) {
       // 支持多个密钥，用逗号分隔
       const multiKeys = apiKeyHeader.split(',').map(k => k.trim()).filter(k => k);
@@ -45,7 +47,7 @@ export class ApiKeyManager {
   validateApiKey(key: string): boolean {
     // Gemini API密钥通常以 "AIza" 开头
     // 这里只做基本长度检查
-    return key.length > 20;
+    return key.length >= API_KEY.MIN_LENGTH;
   }
 
   /**

@@ -5,31 +5,17 @@
 
 import { ApiResponse } from '../client';
 import { ResponseTransformer } from '../transformers/response-transformer';
-import { ClaudeResponse, ClaudeErrorResponse } from '../types/claude';
+import { ClaudeResponse } from '../types/claude';
+import { createErrorResponse as createError, createSuccessResponse } from '../utils/response';
+import { createResponseHeaders } from '../utils/cors';
+import { getErrorTypeFromStatus } from '../utils/common';
 
 export class ResponseManager {
   /**
    * 创建错误响应
    */
   createErrorResponse(statusCode: number, message: string): Response {
-    const errorResponse: ClaudeErrorResponse = {
-      type: 'error',
-      error: {
-        type: this.getErrorType(statusCode),
-        message: message
-      }
-    };
-
-    return new Response(JSON.stringify(errorResponse), {
-      status: statusCode,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version'
-      }
-    });
+    return createError(statusCode, message, true);
   }
 
   /**
@@ -55,13 +41,7 @@ export class ResponseManager {
 
       return new Response(JSON.stringify(claudeResponse), {
         status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version'
-        }
+        headers: createResponseHeaders('application/json')
       });
 
     } catch (error) {
@@ -82,7 +62,7 @@ export class ResponseManager {
 
     // 提取详细错误信息
     let errorMessage = this.extractErrorMessage(body);
-    let errorType = this.getErrorType(statusCode);
+    let errorType = getErrorTypeFromStatus(statusCode);
 
     // 处理特定的Gemini错误
     if (body?.error) {
@@ -135,13 +115,7 @@ export class ResponseManager {
 
     return new Response(JSON.stringify(claudeError), {
       status: this.mapGeminiStatusToClaude(statusCode),
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version'
-      }
+      headers: createResponseHeaders('application/json')
     });
   }
 
@@ -173,44 +147,11 @@ export class ResponseManager {
     return 'Unknown error occurred';
   }
 
-  /**
-   * 获取错误类型
-   */
-  private getErrorType(statusCode: number): string {
-    switch (statusCode) {
-      case 400:
-        return 'invalid_request_error';
-      case 401:
-        return 'authentication_error';
-      case 403:
-        return 'permission_error';
-      case 404:
-        return 'not_found_error';
-      case 429:
-        return 'rate_limit_error';
-      case 502:
-      case 503:
-        return 'overloaded_error';
-      case 504:
-        return 'timeout_error';
-      default:
-        return 'api_error';
-    }
-  }
 
   /**
    * 创建成功响应
    */
   createSuccessResponse(data: any): Response {
-    return new Response(JSON.stringify(data), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version'
-      }
-    });
+    return createSuccessResponse(data, true);
   }
 }

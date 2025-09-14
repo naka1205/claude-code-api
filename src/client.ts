@@ -4,6 +4,8 @@
  */
 
 import { logger } from './middlewares/logger';
+import { headersToObject, maskApiKey } from './utils/common';
+import { TIMEOUTS } from './utils/constants';
 
 /**
  * API客户端配置
@@ -43,7 +45,7 @@ export class GeminiApiClient {
   constructor(apiKeys: string | string[], config: ApiClientConfig = {}) {
     this.apiKeys = Array.isArray(apiKeys) ? apiKeys : [apiKeys];
     this.baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com';
-    this.timeout = config.timeout || 60000;
+    this.timeout = config.timeout || TIMEOUTS.API_CALL;
 
     if (this.apiKeys.length === 0) {
       throw new Error('At least one API key is required');
@@ -64,7 +66,7 @@ export class GeminiApiClient {
     }
 
     // 记录使用的API密钥（隐藏敏感信息）
-    const maskedKey = selectedKey.length > 8 ? `${selectedKey.substring(0, 8)}***` : '***';
+    const maskedKey = maskApiKey(selectedKey);
     logger.debug('Using API key', {
       keyIndex: randomIndex + 1,
       totalKeys: this.apiKeys.length,
@@ -97,7 +99,7 @@ export class GeminiApiClient {
     const requestBody = JSON.stringify(data);
 
     // Log the full URL (masking API key)
-    const logUrl = url.toString().replace(apiKey, apiKey.substring(0, 8) + '***');
+    const logUrl = url.toString().replace(apiKey, maskApiKey(apiKey));
     logger.gemini('request', endpoint, {
       url: logUrl,
       isStream,
@@ -123,10 +125,7 @@ export class GeminiApiClient {
 
       clearTimeout(timeoutId);
 
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
+      const headers = headersToObject(response.headers);
 
       // 详细日志响应状态
       logger.gemini('response', endpoint, {

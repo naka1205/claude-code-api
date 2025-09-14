@@ -318,21 +318,22 @@ export class RequestTransformer {
     warnings: ValidationWarning[]
   ): GeminiGenerationConfig {
     const modelMapper = ModelMapper.getInstance();
+    const geminiModel = modelMapper.mapModel(claudeRequest.model);
     const maxTokens = options.maxOutputTokens ||
-      modelMapper.getRecommendedMaxTokens(claudeRequest.model, claudeRequest.max_tokens);
+      modelMapper.getRecommendedMaxTokens(geminiModel);
 
     // 检查token限制
-    const capabilities = modelMapper.getModelCapabilities(claudeRequest.model);
-    if (maxTokens > capabilities.maxOutputTokens) {
+    const capabilities = modelMapper.getModelCapabilities(geminiModel);
+    if (maxTokens > capabilities.maxTokens) {
       warnings.push({
         type: 'warning',
-        message: `Requested tokens ${maxTokens} exceeds model limit ${capabilities.maxOutputTokens}. Using model limit.`,
+        message: `Requested tokens ${maxTokens} exceeds model limit ${capabilities.maxTokens}. Using model limit.`,
         parameter: 'max_tokens'
       });
     }
 
     const config: GeminiGenerationConfig = {
-      maxOutputTokens: Math.min(maxTokens, capabilities.maxOutputTokens),
+      maxOutputTokens: Math.min(maxTokens, capabilities.maxTokens),
       temperature: claudeRequest.temperature,
       topP: claudeRequest.top_p,
       topK: claudeRequest.top_k,

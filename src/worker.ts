@@ -4,9 +4,10 @@
  */
 
 import { RequestHandler } from './handler';
-import { StreamManager } from './handler/stream-manager';
-import { Config } from './config';
 import { logger } from './middlewares/logger';
+import { createCorsHeaders, createResponseHeaders } from './utils/cors';
+import { generateRequestId, headersToObject } from './utils/common';
+import { createErrorResponse } from './utils/response';
 
 export interface Env {
   KV?: KVNamespace;  // Make KV optional
@@ -34,64 +35,8 @@ async function parseBody(request: Request): Promise<any> {
   }
 }
 
-/**
- * Set CORS headers
- */
-function setCorsHeaders(): Headers {
-  const headers = new Headers();
-  headers.set('Access-Control-Allow-Origin', '*');
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
-  headers.set('Access-Control-Max-Age', '86400');
-  return headers;
-}
 
-/**
- * Create error response
- */
-function createErrorResponse(statusCode: number, message: string, corsEnabled: boolean = true): Response {
-  const errorType = getErrorType(statusCode);
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-cache'
-  });
 
-  if (corsEnabled) {
-    const corsHeaders = setCorsHeaders();
-    corsHeaders.forEach((value, key) => {
-      headers.set(key, value);
-    });
-  }
-
-  return new Response(
-    JSON.stringify({
-      type: 'error',
-      error: {
-        type: errorType,
-        message: message
-      }
-    }),
-    {
-      status: statusCode,
-      headers
-    }
-  );
-}
-
-/**
- * Get error type based on status code
- */
-function getErrorType(statusCode: number): string {
-  switch (statusCode) {
-    case 400: return 'invalid_request_error';
-    case 401: return 'authentication_error';
-    case 403: return 'permission_error';
-    case 404: return 'not_found_error';
-    case 429: return 'rate_limit_error';
-    case 500: return 'api_error';
-    default: return 'api_error';
-  }
-}
 
 /**
  * Main request handler
@@ -104,20 +49,17 @@ export default {
       const pathname = url.pathname;
 
       // 设置请求ID
-      const requestId = `req_${Math.random().toString(36).substr(2, 9)}`;
+      const requestId = generateRequestId();
       logger.setRequestId(requestId);
 
-      console.log(`[Worker] ${method} ${pathname} - RequestID: ${requestId}`);
+      logger.info(`[Worker] ${method} ${pathname} - RequestID: ${requestId}`);
       // Convert URLSearchParams and Headers for Workers environment
       const queryParams: Record<string, string> = {};
       url.searchParams.forEach((value, key) => {
         queryParams[key] = value;
       });
 
-      const headerObj: Record<string, string> = {};
-      request.headers.forEach((value, key) => {
-        headerObj[key] = value;
-      });
+      const headerObj = headersToObject(request.headers);
 
       logger.info('Request received', {
         method,
@@ -131,20 +73,17 @@ export default {
 
       // Handle CORS preflight
       if (method === 'OPTIONS') {
-        console.log('[Worker] Handling CORS preflight');
-        const headers = setCorsHeaders();
+        logger.info('[Worker] Handling CORS preflight');
+        const headers = createCorsHeaders();
         return new Response(null, { status: 204, headers });
       }
 
       // Health check endpoint
       if (method === 'GET' && pathname === '/health') {
-        const headers = new Headers({ 'Content-Type': 'application/json' });
-        if (corsEnabled) {
-          const corsHeaders = setCorsHeaders();
-          corsHeaders.forEach((value, key) => {
-            headers.set(key, value);
-          });
-        }
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+
         return new Response(
           JSON.stringify({
             status: 'ok',
@@ -159,17 +98,12 @@ export default {
       const body = await parseBody(request);
 
       // Create request context
-      const headers: Record<string, string> = {};
-      request.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-
       const context = {
         method,
         url: request.url,
         pathname,
         query: url.searchParams,
-        headers,
+        headers: headerObj,
         body
       };
 
@@ -201,7 +135,7 @@ export default {
         error: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined
       });
-      console.error('Worker error:', error);
+      logger.error('Worker error:', error);
       return createErrorResponse(500, 'Internal Server Error');
     }
   }

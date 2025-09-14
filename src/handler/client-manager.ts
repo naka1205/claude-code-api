@@ -4,20 +4,23 @@
  */
 
 import { GeminiApiClient, createGeminiClient } from '../client';
-import { loadConfig } from '../config';
+import { loadConfig, Config } from '../config';
 
 export class ClientManager {
   private config: any;
+  private cachedAppConfig: Config | null = null;
 
   constructor(config: any) {
     this.config = config;
+    // 在构造函数中缓存配置
+    this.cachedAppConfig = loadConfig(this.config.env);
   }
 
   /**
    * 创建Gemini客户端
    */
   createClient(apiKeys: string[]): GeminiApiClient {
-    const appConfig = loadConfig(this.config.env);
+    const appConfig = this.getAppConfig();
 
     return createGeminiClient(apiKeys, {
       baseUrl: appConfig.gemini.baseUrl,
@@ -29,11 +32,21 @@ export class ClientManager {
    * 获取客户端配置
    */
   getClientConfig(): any {
-    const appConfig = loadConfig(this.config.env);
+    const appConfig = this.getAppConfig();
     return {
       baseUrl: appConfig.gemini.baseUrl,
       timeout: appConfig.gemini.timeout,
       apiVersion: appConfig.gemini.apiVersion
     };
+  }
+
+  /**
+   * 获取缓存的应用配置
+   */
+  private getAppConfig(): Config {
+    if (!this.cachedAppConfig) {
+      this.cachedAppConfig = loadConfig(this.config.env);
+    }
+    return this.cachedAppConfig;
   }
 }

@@ -6,16 +6,15 @@
 import { ClaudeRequest, ClaudeCountRequest } from '../types/claude';
 import { RequestValidator } from './request-validator';
 import { RequestTransformer } from '../transformers/request-transformer';
-import { ResponseTransformer } from '../transformers/response-transformer';
 import { StreamManager } from './stream-manager';
 import { ClientManager } from './client-manager';
 import { ThinkingTransformer } from '../transformers/thinking-transformer';
 import { logger, createRequestLogger } from '../middlewares/logger';
-import { ErrorHandler } from '../middlewares/error';
 import { ResponseManager } from './response-manager';
 import { ApiKeyManager } from './api-key-manager';
 import { KeyUsageCache } from './key-usage-cache';
 import { ApiResponse } from '../client';
+import { generateRequestId } from '../utils/common';
 
 export interface HandlerConfig {
   enableValidation: boolean;
@@ -55,7 +54,7 @@ export class RequestHandler {
    * 处理消息请求
    */
   async handleMessagesRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
-    const finalRequestId = requestId || `req_${Math.random().toString(36).substr(2, 9)}`;
+    const finalRequestId = requestId || generateRequestId();
     const requestLogger = createRequestLogger(finalRequestId);
     logger.setRequestId(finalRequestId);
     const startTime = Date.now();
@@ -138,10 +137,10 @@ export class RequestHandler {
 
       // 添加调试日志
       if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-        console.log(`[Request] Contains ${claudeRequest.tools.length} tools`);
+        logger.info(`[Request] Contains ${claudeRequest.tools.length} tools`);
       }
       if (geminiRequest.tools && geminiRequest.tools.length > 0) {
-        console.log(`[Request] Transformed to ${geminiRequest.tools.length} Gemini tools`);
+        logger.info(`[Request] Transformed to ${geminiRequest.tools.length} Gemini tools`);
       }
 
       // 记录警告信息
@@ -162,7 +161,7 @@ export class RequestHandler {
       try {
         if (claudeRequest.stream) {
           // 流式响应
-          console.log('[RequestHandler] Sending stream request to:', endpoint);
+          logger.info('[RequestHandler] Sending stream request to:', endpoint);
           const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
 
           const duration = Date.now() - startTime;
@@ -189,7 +188,7 @@ export class RequestHandler {
           }
         } else {
           // 非流式响应
-          console.log('[RequestHandler] Sending non-stream request to:', endpoint);
+          logger.info('[RequestHandler] Sending non-stream request to:', endpoint);
           const response = await client.sendRequest(endpoint, geminiRequest, false);
 
           const duration = Date.now() - startTime;
@@ -209,7 +208,7 @@ export class RequestHandler {
       } catch (networkError) {
         // 网络错误 - 记录并直接返回错误
         await KeyUsageCache.onError(selectedKey, 500, this.config.kv);
-        console.error('Network error calling Gemini API:', networkError);
+        logger.error('Network error calling Gemini API:', networkError);
         return this.responseManager.createErrorResponse(
           502,
           `Failed to connect to Gemini API: ${networkError instanceof Error ? networkError.message : 'Network error'}`
@@ -227,11 +226,25 @@ export class RequestHandler {
       }
 
     } catch (error) {
-      requestLogger.error('Request handling error', error);
-      console.error('Request handling error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      requestLogger.error('Request handling error', {
+        message: errorMessage,
+        stack: errorStack,
+        error: error
+      });
+
+      logger.error('Request handling error:', {
+        message: errorMessage,
+        stack: errorStack,
+        type: typeof error,
+        error: error
+      });
+
       return this.responseManager.createErrorResponse(
         500,
-        error instanceof Error ? error.message : 'Internal server error'
+        errorMessage || 'Internal server error'
       );
     }
   }
@@ -240,7 +253,7 @@ export class RequestHandler {
    * 处理token计数请求
    */
   async handleCountTokensRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
-    const finalRequestId = requestId || `req_${Math.random().toString(36).substr(2, 9)}`;
+    const finalRequestId = requestId || generateRequestId();
     logger.setRequestId(finalRequestId);
 
     try {
@@ -303,10 +316,19 @@ export class RequestHandler {
       return this.responseManager.createErrorResponse(500, 'Failed to count tokens');
 
     } catch (error) {
-      console.error('Count request error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      logger.error('Count request error:', {
+        message: errorMessage,
+        stack: errorStack,
+        type: typeof error,
+        error: error
+      });
+
       return this.responseManager.createErrorResponse(
         500,
-        error instanceof Error ? error.message : 'Internal server error'
+        errorMessage || 'Internal server error'
       );
     }
   }
@@ -315,8 +337,18 @@ export class RequestHandler {
    * 获取Gemini模型名称
    */
   private getGeminiModel(model: string): string {
-    const modelMapper = ModelMapper.getInstance();
-    return modelMapper.mapModel(model);
+    try {
+      const modelMapper = ModelMapper.getInstance();
+      return modelMapper.mapModel(model);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Model mapping error:', {
+        model,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw new Error(`Unsupported model: ${model}. ${errorMessage}`);
+    }
   }
 
   /**

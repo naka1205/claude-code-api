@@ -3,6 +3,8 @@
  * 支持环境变量和硬编码配置
  */
 
+import { TIMEOUTS, RATE_LIMITS, SERVER_DEFAULTS } from './utils/constants';
+
 /**
  * 服务器配置接口
  */
@@ -80,17 +82,17 @@ export class ConfigValidationError extends Error {
  */
 const DEFAULT_CONFIG: Config = {
   server: {
-    port: 3000,
-    host: '0.0.0.0',
+    port: SERVER_DEFAULTS.PORT,
+    host: SERVER_DEFAULTS.HOST,
     corsEnabled: true,
-    timeout: 30000,
+    timeout: TIMEOUTS.DEFAULT,
     enableValidation: true,
     enableLogging: true
   },
   gemini: {
     baseUrl: 'https://generativelanguage.googleapis.com',
     apiVersion: 'v1beta',
-    timeout: 30000
+    timeout: TIMEOUTS.DEFAULT
   },
   logging: {
     level: 'info',
@@ -99,15 +101,15 @@ const DEFAULT_CONFIG: Config = {
   },
   rateLimits: {
     tiers: {
-      'gemini-2.5-pro': { rpm: 1000, rpd: 1_000_000 },
-      'gemini-2.5-flash': { rpm: 1000, rpd: 1_000_000 },
-      'gemini-2.5-flash-lite': { rpm: 1000, rpd: 1_000_000 },
-      'gemini-2.0-flash': { rpm: 1000, rpd: 1_000_000 }
+      'gemini-2.5-pro': { rpm: 5, rpd: 100 },
+      'gemini-2.5-flash': { rpm: 10, rpd: 250 },
+      'gemini-2.5-flash-lite': { rpm: 15, rpd: 1000 },
+      'gemini-2.0-flash': { rpm: 30, rpd: 200 }
     }
   },
   blacklist: {
-    cooldownMinMs: 15000,
-    cooldownMaxMs: 60000
+    cooldownMinMs: RATE_LIMITS.COOLDOWN_MIN_MS,
+    cooldownMaxMs: RATE_LIMITS.COOLDOWN_MAX_MS
   }
 };
 
@@ -115,7 +117,7 @@ const DEFAULT_CONFIG: Config = {
  * 从环境变量加载配置
  */
 export function loadConfig(env?: any): Config {
-  const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  const config = { ...DEFAULT_CONFIG };
 
   if (env) {
     // Server configuration
@@ -143,18 +145,3 @@ export function loadConfig(env?: any): Config {
   return config;
 }
 
-/**
- * 获取配置的安全副本（隐藏敏感信息）
- */
-export function getSafeConfig(config?: Config): any {
-  const safeConfig = config || DEFAULT_CONFIG;
-  return JSON.parse(JSON.stringify(safeConfig));
-}
-
-/**
- * 检查必需的配置项
- */
-export function checkRequiredConfig(env?: any): string[] {
-  // Workers环境下，API密钥由客户端提供，不需要服务端配置
-  return [];
-}
