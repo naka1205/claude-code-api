@@ -58,14 +58,22 @@ export class RequestHandler {
     const requestLogger = createRequestLogger(finalRequestId);
     logger.setRequestId(finalRequestId);
     const startTime = Date.now();
+    // 使用 requestId 作为会话ID（Claude Code 官方命令行工具）
+    const sessionId = finalRequestId;
+    console.log(`[RequestDebug] New request started:`, {
+      requestId: finalRequestId,
+      sessionId,
+      method: context.method,
+      pathname: context.pathname,
+      hasKV: !!this.config.kv
+    });
 
     try {
-      // 记录请求详情
-      logger.request(context.method, context.url, context.headers, context.body);
+      
 
       // 记录请求参数摘要
       if (this.config.enableLogging) {
-        this.logRequestSummary(context.body as ClaudeRequest, requestLogger);
+        // logging disabled
       }
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
@@ -77,10 +85,10 @@ export class RequestHandler {
       if (this.config.enableValidation) {
         const validationError = this.validator.validateClaudeRequest(context.body);
         if (validationError) {
-          logger.validation(false, [validationError], finalRequestId);
+          
           return this.responseManager.createErrorResponse(400, validationError);
         }
-        logger.validation(true, undefined, finalRequestId);
+        
       }
 
       const claudeRequest = context.body as ClaudeRequest;
@@ -129,25 +137,18 @@ export class RequestHandler {
       const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
       const geminiRequest = transformResult.request;
 
-      logger.transformation('request', claudeRequest.model, geminiModel, finalRequestId);
+      
 
       if (this.config.enableLogging) {
-        this.logTransformedRequest(geminiRequest, requestLogger);
+        // logging disabled
       }
 
       // 添加调试日志
-      if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-        logger.info(`[Request] Contains ${claudeRequest.tools.length} tools`);
-      }
-      if (geminiRequest.tools && geminiRequest.tools.length > 0) {
-        logger.info(`[Request] Transformed to ${geminiRequest.tools.length} Gemini tools`);
-      }
+      
 
       // 记录警告信息
       if (transformResult.warnings && transformResult.warnings.length > 0) {
-        transformResult.warnings.forEach(warning => {
-          requestLogger.warn(`Transform Warning - ${warning.type}: ${warning.message}`);
-        });
+        // skip warn logs
       }
 
       // 5. 创建客户端（使用选定的密钥）
@@ -155,24 +156,24 @@ export class RequestHandler {
 
       // 6. 确定端点
       const endpoint = this.getGeminiEndpoint(claudeRequest.model, claudeRequest.stream);
-      logger.apiCall(endpoint, 'POST', finalRequestId);
 
       // 7. 发送请求 - 添加更好的错误处理
       try {
         if (claudeRequest.stream) {
           // 流式响应
-          logger.info('[RequestHandler] Sending stream request to:', endpoint);
+          
           const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
 
           const duration = Date.now() - startTime;
-          logger.apiResponse(endpoint, 200, duration, finalRequestId);
 
           if ('stream' in streamResponse) {
             return this.streamManager.handleStreamResponse(
               streamResponse.stream,
               claudeRequest.model,
               streamResponse.headers,
-              exposeThinkingToClient
+              exposeThinkingToClient,
+              this.config.kv,
+              sessionId
             );
           } else {
             // 非流式错误响应 - 直接转换错误格式返回
@@ -184,15 +185,13 @@ export class RequestHandler {
               headers: (streamResponse as any).headers,
               body: (streamResponse as any).body || {},
               isStream: false
-            }, claudeRequest.model);
+            }, claudeRequest.model, exposeThinkingToClient, this.config.kv, sessionId);
           }
         } else {
           // 非流式响应
-          logger.info('[RequestHandler] Sending non-stream request to:', endpoint);
           const response = await client.sendRequest(endpoint, geminiRequest, false);
 
           const duration = Date.now() - startTime;
-          logger.apiResponse(endpoint, (response as ApiResponse).statusCode, duration, finalRequestId);
 
           // 错误处理 - 记录密钥错误状态
           if ((response as ApiResponse).statusCode >= 400) {
@@ -202,13 +201,14 @@ export class RequestHandler {
           return await this.responseManager.handleGeminiResponse(
             response as ApiResponse,
             claudeRequest.model,
-            exposeThinkingToClient
+            exposeThinkingToClient,
+            this.config.kv,
+            sessionId
           );
         }
       } catch (networkError) {
-        // 网络错误 - 记录并直接返回错误
+        // 网络错误 - 直接返回错误
         await KeyUsageCache.onError(selectedKey, 500, this.config.kv);
-        logger.error('Network error calling Gemini API:', networkError);
         return this.responseManager.createErrorResponse(
           502,
           `Failed to connect to Gemini API: ${networkError instanceof Error ? networkError.message : 'Network error'}`
@@ -218,29 +218,14 @@ export class RequestHandler {
       // 记录请求完成统计
       if (this.config.enableLogging) {
         const duration = Date.now() - startTime;
-        requestLogger.info('Request completed', {
-          duration,
-          stream: !!claudeRequest.stream,
-          model: claudeRequest.model
-        });
+        // logging disabled
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
 
-      requestLogger.error('Request handling error', {
-        message: errorMessage,
-        stack: errorStack,
-        error: error
-      });
-
-      logger.error('Request handling error:', {
-        message: errorMessage,
-        stack: errorStack,
-        type: typeof error,
-        error: error
-      });
+      // logging disabled
 
       return this.responseManager.createErrorResponse(
         500,
@@ -319,13 +304,6 @@ export class RequestHandler {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
 
-      logger.error('Count request error:', {
-        message: errorMessage,
-        stack: errorStack,
-        type: typeof error,
-        error: error
-      });
-
       return this.responseManager.createErrorResponse(
         500,
         errorMessage || 'Internal server error'
@@ -342,11 +320,6 @@ export class RequestHandler {
       return modelMapper.mapModel(model);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Model mapping error:', {
-        model,
-        error: errorMessage,
-        stack: error instanceof Error ? error.stack : undefined
-      });
       throw new Error(`Unsupported model: ${model}. ${errorMessage}`);
     }
   }
@@ -373,17 +346,7 @@ export class RequestHandler {
    */
   private logRequestSummary(claudeRequest: ClaudeRequest, requestLogger: any): void {
     try {
-      requestLogger.info('Incoming Claude request params', {
-        model: claudeRequest?.model,
-        stream: !!claudeRequest?.stream,
-        max_tokens: claudeRequest?.max_tokens,
-        messages_count: Array.isArray(claudeRequest?.messages) ? claudeRequest.messages.length : 0,
-        tools_count: Array.isArray(claudeRequest?.tools) ? claudeRequest.tools.length : 0,
-        temperature: claudeRequest?.temperature,
-        top_p: claudeRequest?.top_p,
-        top_k: claudeRequest?.top_k,
-        has_thinking: !!(claudeRequest as any)?.thinking
-      });
+      // logging disabled
     } catch (error) {
       // 忽略日志记录错误
     }
@@ -394,28 +357,7 @@ export class RequestHandler {
    */
   private logTransformedRequest(geminiRequest: any, requestLogger: any): void {
     try {
-      const summary = {
-        contents_count: Array.isArray(geminiRequest?.contents) ? geminiRequest.contents.length : 0,
-        thinking: geminiRequest?.generationConfig?.thinkingConfig ? {
-          includeThoughts: geminiRequest.generationConfig.thinkingConfig.includeThoughts,
-          thinkingBudget: geminiRequest.generationConfig.thinkingConfig.thinkingBudget
-        } : undefined,
-        maxOutputTokens: geminiRequest?.generationConfig?.maxOutputTokens,
-        temperature: geminiRequest?.generationConfig?.temperature,
-        topP: geminiRequest?.generationConfig?.topP,
-        topK: geminiRequest?.generationConfig?.topK,
-        tools_count: Array.isArray(geminiRequest?.tools) ? geminiRequest.tools.length : 0,
-        tool_functions_total: Array.isArray(geminiRequest?.tools)
-          ? geminiRequest.tools.reduce((sum: number, t: any) => sum + (Array.isArray(t.functionDeclarations) ? t.functionDeclarations.length : 0), 0)
-          : 0,
-        tool_names: Array.isArray(geminiRequest?.tools)
-          ? geminiRequest.tools.flatMap((t: any) => Array.isArray(t.functionDeclarations) ? t.functionDeclarations.map((f: any) => f.name) : [])
-          : [],
-        tool_mode: geminiRequest?.toolConfig?.functionCallingConfig?.mode
-      };
-
-      requestLogger.info('Outgoing Gemini request (summary)', summary);
-      requestLogger.debug('Outgoing Gemini request (details)', { geminiRequest });
+      // logging disabled
     } catch (error) {
       // 忽略日志记录错误
     }

@@ -24,7 +24,9 @@ export class ResponseManager {
   async handleGeminiResponse(
     response: ApiResponse,
     claudeModel: string,
-    exposeThinkingToClient: boolean = false
+    exposeThinkingToClient: boolean = false,
+    kv?: KVNamespace,
+    sessionId?: string
   ): Promise<Response> {
     try {
       // 检查错误响应
@@ -32,12 +34,19 @@ export class ResponseManager {
         return this.handleGeminiError(response);
       }
 
-      // 转换成功响应
-      const claudeResponse = await ResponseTransformer.transformResponse(
+      // 转换成功响应 - 传入sessionId用于内存级去重
+      let claudeResponse = await ResponseTransformer.transformResponse(
         response.body,
         claudeModel,
-        exposeThinkingToClient
+        exposeThinkingToClient,
+        undefined,
+        sessionId
       );
+
+      // 可选：如果KV可用，进行额外的KV级去重
+      if (kv && sessionId) {
+        claudeResponse = await this.dedupToolUsesWithKV(claudeResponse, kv, sessionId);
+      }
 
       return new Response(JSON.stringify(claudeResponse), {
         status: 200,
@@ -45,12 +54,87 @@ export class ResponseManager {
       });
 
     } catch (error) {
-      console.error('Response handling error:', error);
       return this.createErrorResponse(
         500,
         error instanceof Error ? error.message : 'Failed to process response'
       );
     }
+  }
+
+  /**
+   * KV级别的工具调用去重（备份方案）
+   */
+  private async dedupToolUsesWithKV(claudeResponse: ClaudeResponse, kv: KVNamespace, sessionId: string): Promise<ClaudeResponse> {
+    if (!Array.isArray(claudeResponse?.content)) return claudeResponse;
+
+    console.log(`[KVDebug] Starting KV-based deduplication`, {
+      contentBlocks: claudeResponse.content.length,
+      toolUseBlocks: claudeResponse.content.filter((b: any) => b.type === 'tool_use').length
+    });
+
+    const resultContent: any[] = [];
+    for (const block of claudeResponse.content as any[]) {
+      if (block && block.type === 'tool_use') {
+        const name: string = block.name || '';
+        const input = block.input || {};
+
+        // 使用KV去重
+        const signature = this.computeToolSignature(name, input);
+        const kvKey = `tool_dedup:${sessionId}:${signature}`;
+
+        console.log(`[KVDebug] Checking tool use in KV: ${name}`, {
+          signature,
+          kvKey
+        });
+
+        try {
+          const exists = await kv.get(kvKey);
+
+          if (exists) {
+            console.log(`[KVDebug] Skipping duplicate tool use from KV: ${name}`);
+            continue;
+          }
+
+          // 记录到KV，较短TTL（5分钟）
+          await kv.put(kvKey, '1', { expirationTtl: 300 });
+          console.log(`[KVDebug] Recorded new tool use in KV: ${name}`);
+        } catch (error) {
+          console.log(`[KVDebug] KV operation failed for ${name}:`, error);
+        }
+      }
+      resultContent.push(block);
+    }
+
+    console.log(`[ResponseManager] Deduplication completed:`, {
+      originalBlocks: claudeResponse.content.length,
+      filteredBlocks: resultContent.length,
+      removedBlocks: claudeResponse.content.length - resultContent.length
+    });
+
+    return { ...claudeResponse, content: resultContent } as ClaudeResponse;
+  }
+
+  private computeToolSignature(name: string, input: any): string {
+    const stable = this.stableStringify(input);
+    return this.simpleHash(`${name}:${stable}`);
+  }
+
+  private stableStringify(obj: any): string {
+    if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+    if (Array.isArray(obj)) return '[' + obj.map(v => this.stableStringify(v)).join(',') + ']';
+    const keys = Object.keys(obj).sort();
+    const pairs = keys.map(k => JSON.stringify(k) + ':' + this.stableStringify(obj[k]));
+    return '{' + pairs.join(',') + '}';
+  }
+
+  private simpleHash(content: string): string {
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36);
   }
 
   /**

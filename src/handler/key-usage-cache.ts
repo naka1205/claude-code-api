@@ -116,7 +116,7 @@ export class KeyUsageCache {
 
     // 503错误记录但不严重影响后续选择，因为这通常是临时性问题
     if (errorCode === 503) {
-      console.log(`[KeyUsageCache] API key ${key.slice(0, 10)}... encountered 503 (model overloaded) - temporary issue`);
+      
     }
 
     await kv.put(

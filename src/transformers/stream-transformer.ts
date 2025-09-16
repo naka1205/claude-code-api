@@ -24,7 +24,7 @@ interface StreamBuffer {
  * 提供完整的去重和增量检测功能
  */
 class StreamStateManager {
-  private processedFunctionCalls: Map<string, string> = new Map();
+  public processedFunctionCalls: Map<string, string> = new Map();
   private processedTextHashes: Set<string> = new Set();
   private lastTextContent: string = '';
   private buffer: StreamBuffer = {
@@ -40,16 +40,14 @@ class StreamStateManager {
   processIncrementalText(text: string): string | null {
     if (!text) return null;
 
-    console.log(`[StateManager] Processing text: "${text}", lastText: "${this.lastTextContent}"`);
+    
 
     // 检查是否为累积文本（包含之前的内容）
     if (this.lastTextContent && text.startsWith(this.lastTextContent)) {
       // 提取增量部分
       const incrementalText = text.substring(this.lastTextContent.length);
-      console.log(`[StateManager] Detected cumulative text, increment: "${incrementalText}"`);
 
       if (!incrementalText) {
-        console.log(`[StateManager] No increment, skipping duplicate`);
         return null;
       }
 
@@ -60,12 +58,11 @@ class StreamStateManager {
 
     // 检查是否为完全相同的文本（避免重复）
     if (this.lastTextContent === text) {
-      console.log(`[StateManager] Identical text detected, skipping duplicate`);
       return null;
     }
 
     // 新的文本内容或真正的增量文本
-    console.log(`[StateManager] New text content: "${text}"`);
+    
     this.lastTextContent = text;
     this.buffer.textContent += text;
     return text;
@@ -76,7 +73,13 @@ class StreamStateManager {
    */
   isDuplicateFunctionCall(functionCall: { name: string; args: any }): boolean {
     const signature = this.generateFunctionSignature(functionCall);
-    return this.processedFunctionCalls.has(signature);
+    const isDuplicate = this.processedFunctionCalls.has(signature);
+    console.log(`[StreamDebug] Checking duplicate for ${functionCall.name}:`, {
+      signature,
+      isDuplicate,
+      existingSignatures: Array.from(this.processedFunctionCalls.keys())
+    });
+    return isDuplicate;
   }
 
   /**
@@ -93,13 +96,20 @@ class StreamStateManager {
       id: toolUseId
     });
 
+    console.log(`[StreamDebug] Recorded function call:`, {
+      name: functionCall.name,
+      signature,
+      toolUseId,
+      totalProcessed: this.processedFunctionCalls.size
+    });
+
     return toolUseId;
   }
 
   /**
    * 生成函数签名
    */
-  private generateFunctionSignature(functionCall: { name: string; args: any }): string {
+  generateFunctionSignature(functionCall: { name: string; args: any }): string {
     const argsStr = JSON.stringify(functionCall.args || {});
     const content = `${functionCall.name}:${argsStr}`;
     return this.simpleHash(content);
@@ -186,7 +196,7 @@ export class StreamTransformer {
   /**
    * 创建Gemini到Claude的流转换器 - 增强版本
    */
-  static createClaudeStreamTransformer(claudeModel: string, exposeThinkingToClient: boolean = false): TransformStream<Uint8Array, Uint8Array> {
+  static createClaudeStreamTransformer(claudeModel: string, exposeThinkingToClient: boolean = false, kv?: KVNamespace, sessionId?: string): TransformStream<Uint8Array, Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -202,6 +212,7 @@ export class StreamTransformer {
 
     // 使用增强的状态管理器 - 恢复自Node.js版本
     const stateManager = new StreamStateManager();
+    console.log(`[StreamDebug] Created new StreamStateManager for model: ${claudeModel}`);
 
     // 转换停止原因的辅助函数
     const transformStopReason = (finishReason: string): {
@@ -253,8 +264,6 @@ export class StreamTransformer {
               // 某些情况下可能直接返回JSON
               data = line.trim();
             } else {
-              // 记录非标准格式
-              console.log('[Stream] Non-standard line format:', line);
               continue;
             }
 
@@ -264,18 +273,9 @@ export class StreamTransformer {
 
             try {
               const geminiChunk = JSON.parse(data) as GeminiStreamResponse;
-              console.log('[Stream] Parsed chunk with candidates:', geminiChunk.candidates?.length || 0);
 
               // 详细调试：记录Gemini原始返回内容
               if (geminiChunk.candidates?.[0]?.content?.parts) {
-                geminiChunk.candidates[0].content.parts.forEach((part, index) => {
-                  if ('text' in part && part.text) {
-                    console.log(`[Stream] Raw Gemini text chunk ${index}:`, JSON.stringify(part.text));
-                  }
-                  if ('functionCall' in part && part.functionCall) {
-                    console.log(`[Stream] Raw Gemini function call ${index}:`, JSON.stringify(part.functionCall));
-                  }
-                });
               }
 
               // 首次消息，发送message_start
@@ -324,11 +324,10 @@ export class StreamTransformer {
                     // 使用状态管理器进行增量检测 - 恢复自Node.js版本
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (!incrementalText) {
-                      console.log('[Stream] Skipping duplicate text content');
                       continue; // 跳过无增量的重复内容
                     }
 
-                    console.log('[Stream] Sending text delta:', incrementalText.substring(0, 50));
+                    
 
                     // 发送文本增量
                     const delta: ClaudeStreamEvent = {
@@ -343,13 +342,46 @@ export class StreamTransformer {
                     controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
                     currentTextContent += incrementalText;
                   } else if ('functionCall' in part && part.functionCall) {
-                    // 使用状态管理器进行函数调用去重 - 恢复自Node.js版本
-                    if (stateManager.isDuplicateFunctionCall(part.functionCall)) {
-                      console.log('[Stream] Skipping duplicate function call:', part.functionCall.name);
-                      continue; // 跳过重复的函数调用
+                    // 使用状态管理器进行函数调用去重
+                    const functionCall = part.functionCall;
+                    const signature = stateManager.generateFunctionSignature(functionCall);
+
+                    // 检查本地状态管理器
+                    let shouldSkip = stateManager.isDuplicateFunctionCall(functionCall);
+
+                    console.log(`[StreamDebug] Processing function call: ${functionCall.name}`, {
+                      args: functionCall.args,
+                      signature,
+                      isDuplicate: shouldSkip,
+                      processedCalls: Array.from(stateManager.processedFunctionCalls.keys())
+                    });
+
+                    // 可选：如果KV可用，作为额外的备份去重
+                    if (!shouldSkip && kv && sessionId) {
+                      const kvKey = `tool_dedup:${sessionId}:${signature}`;
+                      try {
+                        const exists = await kv.get(kvKey);
+                        if (exists) {
+                          console.log(`[StreamDebug] KV duplicate detected, skipping: ${functionCall.name}`);
+                          shouldSkip = true;
+                        } else {
+                          // 记录到KV，设置较短的过期时间
+                          await kv.put(kvKey, '1', { expirationTtl: 300 }); // 5分钟过期
+                          console.log(`[StreamDebug] Recorded in KV: ${functionCall.name} (${signature})`);
+                        }
+                      } catch (error) {
+                        console.log(`[StreamDebug] KV operation failed:`, error);
+                      }
                     }
 
-                    const toolUseId = stateManager.recordFunctionCall(part.functionCall);
+                    if (shouldSkip) {
+                      console.log(`[StreamDebug] Skipping duplicate function call: ${functionCall.name} (${signature})`);
+                      continue;
+                    }
+
+                    // 记录到本地状态管理器
+                    const toolUseId = stateManager.recordFunctionCall(functionCall);
+                    console.log(`[StreamDebug] Recorded new function call: ${functionCall.name} -> ${toolUseId}`);
 
                     // 处理args - 可能是字符串或对象
                     let args = part.functionCall.args || {};
@@ -357,17 +389,11 @@ export class StreamTransformer {
                       try {
                         args = JSON.parse(args);
                       } catch (e) {
-                        console.error('[Stream] Failed to parse function args:', e);
                         args = {};
                       }
                     }
 
-                    // 调试日志
-                    console.log('[Stream] Processing functionCall:', {
-                      name: part.functionCall.name,
-                      args: args,
-                      toolUseId
-                    });
+                    
 
                     // 先结束当前文本块（如果有）
                     if (currentBlockIndex === 0 && currentTextContent) {
@@ -387,8 +413,7 @@ export class StreamTransformer {
                       input: args
                     };
 
-                    // 调试：打印将要发送的工具使用块
-                    console.log('[Stream] Sending tool_use block:', JSON.stringify(toolUse));
+                    
 
                     // 发送工具使用开始事件
                     const toolBlockStart: ClaudeStreamEvent = {
@@ -471,11 +496,10 @@ export class StreamTransformer {
                 controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`));
               }
             } catch (e) {
-              console.error('Failed to parse Gemini chunk:', e, 'Data:', data);
+               
             }
           }
         } catch (error) {
-          console.error('Stream transformation error:', error);
           const errorEvent: ClaudeStreamEvent = {
             type: 'error',
             error: {
@@ -530,7 +554,7 @@ export class StreamTransformer {
                   }
                 }
               } catch (e) {
-                console.warn('Failed to parse final buffer data:', e);
+                 
               }
             }
           } catch (e) {
@@ -576,10 +600,12 @@ export class StreamTransformer {
   static createStreamPipeline(
     geminiStream: ReadableStream,
     claudeModel: string,
-    exposeThinkingToClient: boolean = false
+    exposeThinkingToClient: boolean = false,
+    kv?: KVNamespace,
+    sessionId?: string
   ): ReadableStream {
     // 直接返回转换后的流
-    return geminiStream.pipeThrough(this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient));
+    return geminiStream.pipeThrough(this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, kv, sessionId));
   }
 
   /**
@@ -592,7 +618,6 @@ export class StreamTransformer {
     return geminiStream.pipeThrough(new TransformStream({
       transform(chunk, controller) {
         const text = decoder.decode(chunk, { stream: true });
-        console.log('[Debug Stream]:', text);
         controller.enqueue(chunk);
       }
     }));

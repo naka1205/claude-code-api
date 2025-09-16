@@ -65,6 +65,7 @@ export interface Config {
   logging: LoggingConfig;
   rateLimits: RateLimitConfig;
   blacklist: BlacklistConfig;
+  kv?: KVNamespace;
 }
 
 /**
@@ -120,6 +121,8 @@ export function loadConfig(env?: any): Config {
   const config = { ...DEFAULT_CONFIG };
 
   if (env) {
+    // KV 绑定
+    if (env.KV) config.kv = env.KV;
     // Server configuration
     if (env.PORT) config.server.port = parseInt(env.PORT);
     if (env.HOST) config.server.host = env.HOST;

@@ -117,7 +117,7 @@ export class ContentTransformer {
         return null;
 
       default:
-        console.warn(`Unknown content type: ${(item as any).type}`);
+        
         // 尝试作为文本处理
         if ((item as any).text) {
           return { text: (item as any).text };
@@ -208,7 +208,7 @@ export class ContentTransformer {
       case 'bash':
       case 'bash_20250124':
         if (!args.command) {
-          console.warn(`Bash tool requires 'command' parameter, got: ${JSON.stringify(args)}`);
+          
           // 提供默认值以防止错误
           return { command: 'echo "No command provided"' };
         }
@@ -218,7 +218,7 @@ export class ContentTransformer {
       case 'web_fetch':
       case 'web_fetch_20250305':
         if (!args.url) {
-          console.warn(`WebFetch tool requires 'url' parameter, got: ${JSON.stringify(args)}`);
+          
           // 提供默认值以防止错误
           return {
             url: 'https://example.com',
@@ -234,7 +234,7 @@ export class ContentTransformer {
       case 'web_search':
       case 'web_search_20250305':
         if (!args.query) {
-          console.warn(`WebSearch tool requires 'query' parameter, got: ${JSON.stringify(args)}`);
+          
           return { query: 'search query' };
         }
         break;
@@ -242,7 +242,7 @@ export class ContentTransformer {
       case 'code_execution':
       case 'code_execution_20250124':
         if (!args.code) {
-          console.warn(`Code execution tool requires 'code' parameter, got: ${JSON.stringify(args)}`);
+          
           return {
             language: args.language || 'python',
             code: 'print("No code provided")'

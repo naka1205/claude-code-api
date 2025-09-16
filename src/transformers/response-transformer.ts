@@ -48,7 +48,8 @@ export class ResponseTransformer {
     geminiResponse: GeminiResponse,
     claudeModel: string,
     exposeThinkingToClient: boolean = false,
-    options?: ResponseTransformOptions
+    options?: ResponseTransformOptions,
+    sessionId?: string
   ): Promise<ClaudeResponse> {
     const transformOptions = { ...this.defaultOptions, exposeThinkingToClient, ...options };
     try {
@@ -58,8 +59,8 @@ export class ResponseTransformer {
         throw new Error('No response candidate available');
       }
 
-      // 转换内容块
-      let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient);
+      // 转换内容块 - 传入sessionId用于去重
+      let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient, sessionId);
 
       // 处理Google Search的grounding metadata引用
       if (geminiResponse.candidates && geminiResponse.candidates[0] && (geminiResponse.candidates[0] as any).groundingAttributions) {
@@ -97,9 +98,7 @@ export class ResponseTransformer {
       // 验证输出质量 - 恢复自Node.js版本
       if (transformOptions.validateOutput) {
         const qualityScore = this.calculateResponseQuality(claudeResponse);
-        if (qualityScore.score < 70) {
-          console.warn('[ResponseTransformer] Low quality response detected:', qualityScore);
-        }
+        // 低质量告警日志已移除
       }
 
       return claudeResponse;
@@ -113,13 +112,14 @@ export class ResponseTransformer {
    */
   private static async transformContentBlocks(
     candidate: GeminiCandidate,
-    exposeThinkingToClient: boolean = false
+    exposeThinkingToClient: boolean = false,
+    sessionId?: string
   ): Promise<ClaudeContentBlock[]> {
     if (!candidate.content || !candidate.content.parts) {
       return [{ type: 'text', text: '' }];
     }
 
-    // 使用ContentTransformer的配对逻辑处理工具调用和响应
+    // 使用原有的ContentTransformer处理
     return await ContentTransformer.processToolCallsAndResults(
       candidate.content.parts,
       exposeThinkingToClient
@@ -150,7 +150,6 @@ export class ResponseTransformer {
         try {
           args = JSON.parse(args);
         } catch (e) {
-          console.error('[ResponseTransformer] Failed to parse function args:', e);
           args = {};
         }
       }

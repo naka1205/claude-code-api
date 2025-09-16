@@ -51,8 +51,6 @@ export default {
       // 设置请求ID
       const requestId = generateRequestId();
       logger.setRequestId(requestId);
-
-      logger.info(`[Worker] ${method} ${pathname} - RequestID: ${requestId}`);
       // Convert URLSearchParams and Headers for Workers environment
       const queryParams: Record<string, string> = {};
       url.searchParams.forEach((value, key) => {
@@ -61,19 +59,13 @@ export default {
 
       const headerObj = headersToObject(request.headers);
 
-      logger.info('Request received', {
-        method,
-        pathname,
-        query: queryParams,
-        headers: logger.sanitizeHeaders(headerObj)
-      });
+      
 
       // Get config from environment
       const corsEnabled = env.CORS_ENABLED !== 'false';
 
       // Handle CORS preflight
       if (method === 'OPTIONS') {
-        logger.info('[Worker] Handling CORS preflight');
         const headers = createCorsHeaders();
         return new Response(null, { status: 204, headers });
       }
@@ -112,30 +104,25 @@ export default {
         enableValidation: env.ENABLE_VALIDATION !== 'false',
         enableLogging: env.ENABLE_LOGGING !== 'false',
         env,
-        ctx
+        ctx,
+        kv: env.KV  // 传递 KV 实例
       });
 
       // Claude API compatibility endpoints
       if (method === 'POST' && pathname === '/v1/messages') {
-        logger.info('Handling messages endpoint');
         return await handler.handleMessagesRequest(context, request, requestId);
       }
 
       if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
-        logger.info('Handling count-tokens endpoint');
         return await handler.handleCountTokensRequest(context, request, requestId);
       }
 
       // 404 for unknown endpoints
-      logger.warn('Unknown endpoint', { pathname });
+      
       return createErrorResponse(404, 'Not Found', corsEnabled);
 
     } catch (error) {
-      logger.error('Worker error', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      logger.error('Worker error:', error);
+      
       return createErrorResponse(500, 'Internal Server Error');
     }
   }

@@ -4,7 +4,7 @@
  */
 
 import { StreamTransformer } from '../transformers/stream-transformer';
-import { logger } from '../middlewares/logger';
+ 
 
 export class StreamManager {
   /**
@@ -14,18 +14,15 @@ export class StreamManager {
     stream: ReadableStream,
     claudeModel: string,
     headers: Record<string, string>,
-    exposeThinkingToClient: boolean = false
+    exposeThinkingToClient: boolean = false,
+    kv?: KVNamespace,
+    sessionId?: string
   ): Response {
     try {
-      console.log('[StreamManager] Starting stream transformation for model:', claudeModel);
-      console.log('[StreamManager] ExposeThinking:', exposeThinkingToClient);
-      logger.stream('start', {
-        model: claudeModel,
-        exposeThinking: exposeThinkingToClient
-      });
+      
 
-      // 创建转换后的流
-      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient);
+      // 创建转换后的流，传入KV和会话ID用于去重
+      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient, kv, sessionId);
 
       // 添加一个额外的转换器来确保正确的SSE格式
       const sseStream = this.ensureSSEFormat(transformedStream);
@@ -48,7 +45,6 @@ export class StreamManager {
       });
 
     } catch (error) {
-      console.error('Stream handling error:', error);
 
       // 创建错误流
       const errorStream = this.createErrorStream(error);

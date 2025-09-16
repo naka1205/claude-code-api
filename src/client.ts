@@ -3,8 +3,7 @@
  * 使用Fetch API处理对Gemini API的HTTP调用
  */
 
-import { logger } from './middlewares/logger';
-import { headersToObject, maskApiKey } from './utils/common';
+import { headersToObject } from './utils/common';
 import { TIMEOUTS } from './utils/constants';
 
 /**
@@ -51,7 +50,7 @@ export class GeminiApiClient {
       throw new Error('At least one API key is required');
     }
 
-    console.log(`[Gemini API] Initialized with ${this.apiKeys.length} API key(s)`);
+    
   }
 
   /**
@@ -65,13 +64,7 @@ export class GeminiApiClient {
       throw new Error('Selected API key is undefined');
     }
 
-    // 记录使用的API密钥（隐藏敏感信息）
-    const maskedKey = maskApiKey(selectedKey);
-    logger.debug('Using API key', {
-      keyIndex: randomIndex + 1,
-      totalKeys: this.apiKeys.length,
-      maskedKey
-    });
+    
 
     return selectedKey;
   }
@@ -98,15 +91,7 @@ export class GeminiApiClient {
     // 添加请求体大小日志
     const requestBody = JSON.stringify(data);
 
-    // Log the full URL (masking API key)
-    const logUrl = url.toString().replace(apiKey, maskApiKey(apiKey));
-    logger.gemini('request', endpoint, {
-      url: logUrl,
-      isStream,
-      requestSize: requestBody.length,
-      hasTools: data.tools?.length > 0,
-      toolCount: data.tools?.length || 0
-    });
+    
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -127,32 +112,11 @@ export class GeminiApiClient {
 
       const headers = headersToObject(response.headers);
 
-      // 详细日志响应状态
-      logger.gemini('response', endpoint, {
-        statusCode: response.status,
-        headers,
-        isStream
-      });
+      
 
-      // Log error responses from Gemini API
       if (response.status >= 400) {
         const errorText = await response.text();
-        logger.error('Gemini API error response', {
-          statusCode: response.status,
-          errorText: logger.truncate(errorText, 500)
-        });
-
-        // Log request details that caused the error
-        if (data.tools && data.tools.length > 0) {
-          logger.error('Error request had tools', {
-            tools: data.tools.map((t: any) => {
-              if (t.functionDeclarations) return `functions(${t.functionDeclarations.length})`;
-              if (t.google_search) return 'google_search';
-              if (t.codeExecution) return 'codeExecution';
-              return 'unknown';
-            })
-          });
-        }
+        
 
         // Try to parse as JSON
         let errorBody;
@@ -171,16 +135,13 @@ export class GeminiApiClient {
       }
 
       if (isStream && response.body) {
-        logger.info('Returning stream response');
         return {
           statusCode: response.status,
           headers,
           stream: response.body
         } as StreamResponse;
       } else {
-        logger.debug('Parsing JSON response');
         const body = await response.json();
-        logger.debug('Response body received', { bodyKeys: body && typeof body === 'object' ? Object.keys(body) : [] });
         return {
           statusCode: response.status,
           headers,

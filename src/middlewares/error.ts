@@ -29,16 +29,11 @@ export class ErrorHandler {
    */
   static handle(error: any, context?: string): void {
     if (error instanceof ApiError) {
-      logger.error(`${context || 'Error'}: ${error.message}`, {
-        statusCode: error.statusCode,
-        errorType: error.errorType
-      });
+      
     } else if (error instanceof Error) {
-      logger.error(`${context || 'Error'}: ${error.message}`, {
-        stack: error.stack
-      });
+      
     } else {
-      logger.error(`${context || 'Error'}: Unknown error`, error);
+      
     }
   }
 

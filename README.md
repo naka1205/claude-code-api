@@ -336,6 +336,8 @@ npx wrangler dev
 
 # 查看实时日志
 npx wrangler tail
+
+npx --yes wrangler dev --local --port 8787 > dev.log 2>&1
 ```
 
 ### 环境变量配置
