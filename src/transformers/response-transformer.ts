@@ -48,8 +48,7 @@ export class ResponseTransformer {
     geminiResponse: GeminiResponse,
     claudeModel: string,
     exposeThinkingToClient: boolean = false,
-    options?: ResponseTransformOptions,
-    sessionId?: string
+    options?: ResponseTransformOptions
   ): Promise<ClaudeResponse> {
     const transformOptions = { ...this.defaultOptions, exposeThinkingToClient, ...options };
     try {
@@ -59,8 +58,8 @@ export class ResponseTransformer {
         throw new Error('No response candidate available');
       }
 
-      // 转换内容块 - 传入sessionId用于去重
-      let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient, sessionId);
+      // 转换内容块
+      let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient);
 
       // 处理Google Search的grounding metadata引用
       if (geminiResponse.candidates && geminiResponse.candidates[0] && (geminiResponse.candidates[0] as any).groundingAttributions) {
@@ -112,8 +111,7 @@ export class ResponseTransformer {
    */
   private static async transformContentBlocks(
     candidate: GeminiCandidate,
-    exposeThinkingToClient: boolean = false,
-    sessionId?: string
+    exposeThinkingToClient: boolean = false
   ): Promise<ClaudeContentBlock[]> {
     if (!candidate.content || !candidate.content.parts) {
       return [{ type: 'text', text: '' }];

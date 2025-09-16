@@ -196,7 +196,7 @@ export class StreamTransformer {
   /**
    * 创建Gemini到Claude的流转换器 - 增强版本
    */
-  static createClaudeStreamTransformer(claudeModel: string, exposeThinkingToClient: boolean = false, kv?: KVNamespace, sessionId?: string): TransformStream<Uint8Array, Uint8Array> {
+  static createClaudeStreamTransformer(claudeModel: string, exposeThinkingToClient: boolean = false): TransformStream<Uint8Array, Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -356,23 +356,7 @@ export class StreamTransformer {
                       processedCalls: Array.from(stateManager.processedFunctionCalls.keys())
                     });
 
-                    // 可选：如果KV可用，作为额外的备份去重
-                    if (!shouldSkip && kv && sessionId) {
-                      const kvKey = `tool_dedup:${sessionId}:${signature}`;
-                      try {
-                        const exists = await kv.get(kvKey);
-                        if (exists) {
-                          console.log(`[StreamDebug] KV duplicate detected, skipping: ${functionCall.name}`);
-                          shouldSkip = true;
-                        } else {
-                          // 记录到KV，设置较短的过期时间
-                          await kv.put(kvKey, '1', { expirationTtl: 300 }); // 5分钟过期
-                          console.log(`[StreamDebug] Recorded in KV: ${functionCall.name} (${signature})`);
-                        }
-                      } catch (error) {
-                        console.log(`[StreamDebug] KV operation failed:`, error);
-                      }
-                    }
+                    // 仅使用本地状态管理器进行去重
 
                     if (shouldSkip) {
                       console.log(`[StreamDebug] Skipping duplicate function call: ${functionCall.name} (${signature})`);
@@ -600,12 +584,10 @@ export class StreamTransformer {
   static createStreamPipeline(
     geminiStream: ReadableStream,
     claudeModel: string,
-    exposeThinkingToClient: boolean = false,
-    kv?: KVNamespace,
-    sessionId?: string
+    exposeThinkingToClient: boolean = false
   ): ReadableStream {
     // 直接返回转换后的流
-    return geminiStream.pipeThrough(this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, kv, sessionId));
+    return geminiStream.pipeThrough(this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient));
   }
 
   /**

@@ -104,8 +104,7 @@ export default {
         enableValidation: env.ENABLE_VALIDATION !== 'false',
         enableLogging: env.ENABLE_LOGGING !== 'false',
         env,
-        ctx,
-        kv: env.KV  // 传递 KV 实例
+        ctx
       });
 
       // Claude API compatibility endpoints

@@ -14,15 +14,13 @@ export class StreamManager {
     stream: ReadableStream,
     claudeModel: string,
     headers: Record<string, string>,
-    exposeThinkingToClient: boolean = false,
-    kv?: KVNamespace,
-    sessionId?: string
+    exposeThinkingToClient: boolean = false
   ): Response {
     try {
       
 
-      // 创建转换后的流，传入KV和会话ID用于去重
-      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient, kv, sessionId);
+      // 创建转换后的流，移除KV和会话ID参数
+      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient);
 
       // 添加一个额外的转换器来确保正确的SSE格式
       const sseStream = this.ensureSSEFormat(transformedStream);

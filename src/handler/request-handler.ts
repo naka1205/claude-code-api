@@ -21,7 +21,6 @@ export interface HandlerConfig {
   enableLogging: boolean;
   env?: any;
   ctx?: any;
-  kv?: KVNamespace;
 }
 
 export interface RequestContext {
@@ -64,8 +63,7 @@ export class RequestHandler {
       requestId: finalRequestId,
       sessionId,
       method: context.method,
-      pathname: context.pathname,
-      hasKV: !!this.config.kv
+      pathname: context.pathname
     });
 
     try {
@@ -97,8 +95,7 @@ export class RequestHandler {
       const geminiModel = this.getGeminiModel(claudeRequest.model);
       const selectedKey = await KeyUsageCache.pickBestKey(
         apiKeys,
-        geminiModel,
-        this.config.kv
+        geminiModel
       );
 
       if (!selectedKey) {
@@ -106,7 +103,7 @@ export class RequestHandler {
       }
 
       // 记录密钥使用
-      await KeyUsageCache.reserve(selectedKey, this.config.kv);
+      await KeyUsageCache.reserve(selectedKey);
 
       if (this.config.enableLogging) {
         requestLogger.info('Using API key', {
@@ -171,21 +168,19 @@ export class RequestHandler {
               streamResponse.stream,
               claudeRequest.model,
               streamResponse.headers,
-              exposeThinkingToClient,
-              this.config.kv,
-              sessionId
+              exposeThinkingToClient
             );
           } else {
             // 非流式错误响应 - 直接转换错误格式返回
             if ((streamResponse as any).statusCode >= 400) {
-              await KeyUsageCache.onError(selectedKey, (streamResponse as any).statusCode, this.config.kv);
+              await KeyUsageCache.onError(selectedKey, (streamResponse as any).statusCode);
             }
             return await this.responseManager.handleGeminiResponse({
               statusCode: (streamResponse as any).statusCode,
               headers: (streamResponse as any).headers,
               body: (streamResponse as any).body || {},
               isStream: false
-            }, claudeRequest.model, exposeThinkingToClient, this.config.kv, sessionId);
+            }, claudeRequest.model, exposeThinkingToClient);
           }
         } else {
           // 非流式响应
@@ -195,20 +190,18 @@ export class RequestHandler {
 
           // 错误处理 - 记录密钥错误状态
           if ((response as ApiResponse).statusCode >= 400) {
-            await KeyUsageCache.onError(selectedKey, (response as ApiResponse).statusCode, this.config.kv);
+            await KeyUsageCache.onError(selectedKey, (response as ApiResponse).statusCode);
           }
 
           return await this.responseManager.handleGeminiResponse(
             response as ApiResponse,
             claudeRequest.model,
-            exposeThinkingToClient,
-            this.config.kv,
-            sessionId
+            exposeThinkingToClient
           );
         }
       } catch (networkError) {
         // 网络错误 - 直接返回错误
-        await KeyUsageCache.onError(selectedKey, 500, this.config.kv);
+        await KeyUsageCache.onError(selectedKey, 500);
         return this.responseManager.createErrorResponse(
           502,
           `Failed to connect to Gemini API: ${networkError instanceof Error ? networkError.message : 'Network error'}`
@@ -261,8 +254,7 @@ export class RequestHandler {
       // 3. 选择最佳API密钥
       const selectedKey = await KeyUsageCache.pickBestKey(
         apiKeys,
-        this.getGeminiModel(countRequest.model),
-        this.config.kv
+        this.getGeminiModel(countRequest.model)
       );
 
       if (!selectedKey) {
