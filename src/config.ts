@@ -14,7 +14,6 @@ export interface ServerConfig {
   corsEnabled: boolean;
   timeout: number;
   enableValidation: boolean;
-  enableLogging: boolean;
 }
 
 /**
@@ -24,16 +23,6 @@ export interface GeminiConfig {
   baseUrl: string;
   apiVersion: string;
   timeout: number;
-}
-
-/**
- * 日志配置接口
- */
-export interface LoggingConfig {
-  level: 'debug' | 'info' | 'warn' | 'error';
-  enableConsole: boolean;
-  enableFile: boolean;
-  logDir?: string;
 }
 
 /**
@@ -62,7 +51,6 @@ export interface BlacklistConfig {
 export interface Config {
   server: ServerConfig;
   gemini: GeminiConfig;
-  logging: LoggingConfig;
   rateLimits: RateLimitConfig;
   blacklist: BlacklistConfig;
   kv?: KVNamespace;
@@ -87,18 +75,12 @@ const DEFAULT_CONFIG: Config = {
     host: SERVER_DEFAULTS.HOST,
     corsEnabled: true,
     timeout: TIMEOUTS.DEFAULT,
-    enableValidation: true,
-    enableLogging: true
+    enableValidation: true
   },
   gemini: {
     baseUrl: 'https://generativelanguage.googleapis.com',
     apiVersion: 'v1beta',
     timeout: TIMEOUTS.DEFAULT
-  },
-  logging: {
-    level: 'info',
-    enableConsole: true,
-    enableFile: false
   },
   rateLimits: {
     tiers: {
@@ -129,16 +111,11 @@ export function loadConfig(env?: any): Config {
     if (env.CORS_ENABLED !== undefined) config.server.corsEnabled = env.CORS_ENABLED !== 'false';
     if (env.SERVER_TIMEOUT) config.server.timeout = parseInt(env.SERVER_TIMEOUT);
     if (env.ENABLE_VALIDATION !== undefined) config.server.enableValidation = env.ENABLE_VALIDATION !== 'false';
-    if (env.ENABLE_LOGGING !== undefined) config.server.enableLogging = env.ENABLE_LOGGING !== 'false';
 
     // Gemini configuration
     if (env.GEMINI_BASE_URL) config.gemini.baseUrl = env.GEMINI_BASE_URL;
     if (env.GEMINI_API_VERSION) config.gemini.apiVersion = env.GEMINI_API_VERSION;
     if (env.GEMINI_TIMEOUT) config.gemini.timeout = parseInt(env.GEMINI_TIMEOUT);
-
-    // Logging configuration
-    if (env.LOG_LEVEL) config.logging.level = env.LOG_LEVEL as any;
-    if (env.LOG_CONSOLE !== undefined) config.logging.enableConsole = env.LOG_CONSOLE !== 'false';
 
     // Blacklist configuration
     if (env.BLACKLIST_COOLDOWN_MIN_MS) config.blacklist.cooldownMinMs = parseInt(env.BLACKLIST_COOLDOWN_MIN_MS);

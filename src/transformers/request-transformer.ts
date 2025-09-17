@@ -416,14 +416,17 @@ export class RequestTransformer {
       Array.isArray(message.content) &&
       message.content.some((block: any) => {
         if (block.type === 'tool_result' && (block.name === 'WebSearch' || block.tool_name === 'WebSearch')) {
-          const responseText = block.content || '';
-          return typeof responseText === 'string' && (
-            responseText.includes('MALFORMED_FUNCTION_CALL') ||
-            responseText.includes('上游返回空内容') ||
-            responseText.includes('finishReason=') ||
-            responseText.includes('error') ||
-            responseText.includes('failed')
-          );
+          const toolResult = block as any;
+          const responseText = toolResult.content || '';
+          // 检查错误标识
+          return (toolResult.is_error === true) ||
+                 (typeof responseText === 'string' && (
+                   responseText.includes('MALFORMED_FUNCTION_CALL') ||
+                   responseText.includes('上游返回空内容') ||
+                   responseText.includes('finishReason=') ||
+                   responseText.includes('error') ||
+                   responseText.includes('failed')
+                 ));
         }
         return false;
       })
@@ -446,14 +449,17 @@ export class RequestTransformer {
           }
           // 将WebSearch错误结果转换为重试提示
           if (block.type === 'tool_result' && (block.name === 'WebSearch' || block.tool_name === 'WebSearch')) {
-            const responseText = block.content || '';
-            if (typeof responseText === 'string' && (
+            const toolResult = block as any;
+            const responseText = toolResult.content || '';
+            const isError = toolResult.is_error === true;
+
+            if (isError || (typeof responseText === 'string' && (
               responseText.includes('MALFORMED_FUNCTION_CALL') ||
               responseText.includes('上游返回空内容') ||
               responseText.includes('finishReason=') ||
               responseText.includes('error') ||
               responseText.includes('failed')
-            )) {
+            ))) {
               return {
                 type: 'text' as const,
                 text: `之前的搜索出现问题，请重新搜索：${block.input?.query || responseText}`

@@ -4,7 +4,6 @@
  */
 
 import { RequestHandler } from './handler';
-import { logger } from './middlewares/logger';
 import { createCorsHeaders, createResponseHeaders } from './utils/cors';
 import { generateRequestId, headersToObject } from './utils/common';
 import { createErrorResponse } from './utils/response';
@@ -17,7 +16,6 @@ export interface Env {
   HOST?: string;
   CORS_ENABLED?: string;
   ENABLE_VALIDATION?: string;
-  ENABLE_LOGGING?: string;
 }
 
 /**
@@ -48,9 +46,7 @@ export default {
       const method = request.method;
       const pathname = url.pathname;
 
-      // 设置请求ID
       const requestId = generateRequestId();
-      logger.setRequestId(requestId);
       // Convert URLSearchParams and Headers for Workers environment
       const queryParams: Record<string, string> = {};
       url.searchParams.forEach((value, key) => {
@@ -102,7 +98,6 @@ export default {
       // Initialize request handler
       const handler = new RequestHandler({
         enableValidation: env.ENABLE_VALIDATION !== 'false',
-        enableLogging: env.ENABLE_LOGGING !== 'false',
         env,
         ctx
       });

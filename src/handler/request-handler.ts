@@ -9,7 +9,6 @@ import { RequestTransformer } from '../transformers/request-transformer';
 import { StreamManager } from './stream-manager';
 import { ClientManager } from './client-manager';
 import { ThinkingTransformer } from '../transformers/thinking-transformer';
-import { logger, createRequestLogger } from '../middlewares/logger';
 import { ResponseManager } from './response-manager';
 import { ApiKeyManager } from './api-key-manager';
 import { KeyUsageCache } from './key-usage-cache';
@@ -18,7 +17,6 @@ import { generateRequestId } from '../utils/common';
 
 export interface HandlerConfig {
   enableValidation: boolean;
-  enableLogging: boolean;
   env?: any;
   ctx?: any;
 }
@@ -54,8 +52,6 @@ export class RequestHandler {
    */
   async handleMessagesRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
     const finalRequestId = requestId || generateRequestId();
-    const requestLogger = createRequestLogger(finalRequestId);
-    logger.setRequestId(finalRequestId);
     const startTime = Date.now();
     // 使用 requestId 作为会话ID（Claude Code 官方命令行工具）
     const sessionId = finalRequestId;
@@ -69,10 +65,6 @@ export class RequestHandler {
     try {
       
 
-      // 记录请求参数摘要
-      if (this.config.enableLogging) {
-        // logging disabled
-      }
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
       if (!apiKeys || apiKeys.length === 0) {
@@ -105,13 +97,6 @@ export class RequestHandler {
       // 记录密钥使用
       await KeyUsageCache.reserve(selectedKey);
 
-      if (this.config.enableLogging) {
-        requestLogger.info('Using API key', {
-          keyIndex: apiKeys.indexOf(selectedKey) + 1,
-          totalKeys: apiKeys.length,
-          maskedKey: selectedKey.substring(0, 11) + '***'
-        });
-      }
 
       // 提取thinking配置
       let exposeThinkingToClient = false;
@@ -133,12 +118,6 @@ export class RequestHandler {
 
       const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
       const geminiRequest = transformResult.request;
-
-      
-
-      if (this.config.enableLogging) {
-        // logging disabled
-      }
 
       // 添加调试日志
       
@@ -208,17 +187,10 @@ export class RequestHandler {
         );
       }
 
-      // 记录请求完成统计
-      if (this.config.enableLogging) {
-        const duration = Date.now() - startTime;
-        // logging disabled
-      }
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
 
-      // logging disabled
 
       return this.responseManager.createErrorResponse(
         500,
@@ -232,7 +204,6 @@ export class RequestHandler {
    */
   async handleCountTokensRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
     const finalRequestId = requestId || generateRequestId();
-    logger.setRequestId(finalRequestId);
 
     try {
       // 1. 提取API密钥
@@ -331,28 +302,6 @@ export class RequestHandler {
   private getCountEndpoint(model: string): string {
     const geminiModel = this.getGeminiModel(model);
     return `/v1beta/models/${geminiModel}:countTokens`;
-  }
-
-  /**
-   * 记录请求摘要
-   */
-  private logRequestSummary(claudeRequest: ClaudeRequest, requestLogger: any): void {
-    try {
-      // logging disabled
-    } catch (error) {
-      // 忽略日志记录错误
-    }
-  }
-
-  /**
-   * 记录转换后的请求
-   */
-  private logTransformedRequest(geminiRequest: any, requestLogger: any): void {
-    try {
-      // logging disabled
-    } catch (error) {
-      // 忽略日志记录错误
-    }
   }
 }
 

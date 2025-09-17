@@ -8,7 +8,8 @@ import {
   ClaudeContentBlock,
   ClaudeTextContent,
   ClaudeImageContent,
-  ClaudeDocumentContent
+  ClaudeDocumentContent,
+  ClaudeToolResult
 } from '../types/claude';
 import { GeminiPart, GeminiTextPart, GeminiInlineDataPart } from '../types/gemini';
 
@@ -84,27 +85,45 @@ export class ContentTransformer {
 
       case 'tool_result':
         // 转换工具结果为Gemini函数响应
+        const toolResult = item as ClaudeToolResult;
         // 从映射中获取工具名称
-        const toolName = item.tool_use_id ?
-          (this.functionCallMap.get(item.tool_use_id) || item.name || item.tool_name || 'unknown_tool') :
-          (item.name || item.tool_name || 'unknown_tool');
+        const toolName = toolResult.tool_use_id ?
+          (this.functionCallMap.get(toolResult.tool_use_id) || (item as any).name || (item as any).tool_name || 'unknown_tool') :
+          ((item as any).name || (item as any).tool_name || 'unknown_tool');
 
-        const responseContent = typeof item.content === 'string'
-          ? { result: item.content }
-          : Array.isArray(item.content)
-          ? { result: item.content.map((c: any) => c.text || c).join('\n') }
-          : item.content || { success: true };
-
-        return {
-          functionResponse: {
-            name: toolName,
-            response: {
-              ...responseContent,
-              is_error: item.is_error || false,
-              tool_use_id: item.tool_use_id
+        // 根据是否有错误，构建不同的响应格式
+        if (toolResult.is_error) {
+          // 错误响应格式（符合Gemini官方推荐）
+          return {
+            functionResponse: {
+              name: toolName,
+              response: {
+                error: {
+                  code: toolResult.error_code || 'INTERNAL_ERROR',
+                  message: toolResult.content || '工具执行失败',
+                  details: toolResult.error_details || {}
+                }
+              }
             }
-          }
-        };
+          };
+        } else {
+          // 成功响应格式
+          const responseContent = typeof toolResult.content === 'string'
+            ? { result: toolResult.content }
+            : Array.isArray(toolResult.content)
+            ? { result: (toolResult.content as any[]).map((c: any) => c.text || c).join('\n') }
+            : toolResult.content || { success: true };
+
+          return {
+            functionResponse: {
+              name: toolName,
+              response: {
+                ...responseContent,
+                tool_use_id: toolResult.tool_use_id
+              }
+            }
+          };
+        }
 
       case 'thinking':
         // 处理thinking内容
@@ -155,46 +174,6 @@ export class ContentTransformer {
         data: content.source.data
       }
     };
-  }
-
-  /**
-   * 转换Gemini内容回Claude格式
-   */
-  static transformGeminiToClaudeContent(parts: GeminiPart[]): ClaudeContent[] {
-    const contents: ClaudeContent[] = [];
-
-    for (const part of parts) {
-      if ('text' in part) {
-        contents.push({
-          type: 'text',
-          text: part.text
-        });
-      } else if ('inlineData' in part) {
-        // 根据MIME类型判断是图像还是文档
-        const mimeType = part.inlineData.mimeType;
-        if (mimeType.startsWith('image/')) {
-          contents.push({
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: mimeType,
-              data: part.inlineData.data
-            }
-          });
-        } else {
-          contents.push({
-            type: 'document',
-            source: {
-              type: 'base64',
-              media_type: mimeType,
-              data: part.inlineData.data
-            }
-          });
-        }
-      }
-    }
-
-    return contents;
   }
 
   /**
@@ -301,34 +280,6 @@ export class ContentTransformer {
   }
 
   /**
-   * 检查是否为特殊工具
-   */
-  private static isSpecialTool(toolName: string): boolean {
-    const specialTools = ['WebSearch', 'web_search', 'websearch', 'WebFetch', 'web_fetch', 'webfetch'];
-    return specialTools.includes(toolName);
-  }
-
-  /**
-   * 为特殊工具生成响应
-   */
-  private static generateSpecialToolResponse(toolName: string, args: any): string {
-    const name = toolName.toLowerCase();
-
-    if (name === 'websearch' || name === 'web_search') {
-      const query = args?.query || 'unknown query';
-      return `搜索完成：已搜索"${query}"。由于当前配置，返回基础响应。如需真实搜索结果，请配置Gemini的google_search功能。`;
-    }
-
-    if (name === 'webfetch' || name === 'web_fetch') {
-      const url = args?.url || 'unknown URL';
-      const prompt = args?.prompt || 'analyze content';
-      return `页面获取完成：已尝试获取"${url}"并进行"${prompt}"分析。由于当前配置，返回基础响应。如需真实页面内容，请配置Gemini的URL Context功能。`;
-    }
-
-    return `工具 ${toolName} 执行完成`;
-  }
-
-  /**
    * 清空函数调用映射（在新会话开始时调用）
    */
   static clearFunctionCallMap(): void {
@@ -421,12 +372,20 @@ export class ContentTransformer {
         }
         processedResponses.add(responseHash);
 
+        // 检查是否为错误响应
+        const response = part.functionResponse.response as any;
+        const isError = !!response?.error;
+
         blocks.push({
           type: 'tool_result',
           tool_use_id: toolUseId,
-          content: part.functionResponse.response,
-          is_error: !!(part.functionResponse.response as any)?.is_error
-        } as any);
+          content: isError ?
+            (response.error.message || '工具执行失败') :
+            (response.result || response.content || JSON.stringify(response)),
+          is_error: isError,
+          error_code: isError ? response.error.code : undefined,
+          error_details: isError ? response.error.details : undefined
+        } as ClaudeToolResult);
       }
     }
 

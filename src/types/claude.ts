@@ -156,6 +156,8 @@ export interface ClaudeToolResult {
   tool_use_id: string;
   content?: string;
   is_error?: boolean;
+  error_code?: string;  // 可选：错误码（客户端自定义）
+  error_details?: Record<string, any>;  // 可选：错误详情（客户端自定义）
 }
 
 /**
