@@ -117,6 +117,26 @@ export class ResponseTransformer {
       return [{ type: 'text', text: '' }];
     }
 
+    // 调试日志：查看Gemini返回的parts结构
+    console.log('[ResponseTransformer] Gemini response structure:', {
+      hasCandidate: !!candidate,
+      hasParts: !!candidate.content?.parts,
+      partsCount: candidate.content?.parts?.length || 0
+    });
+
+    if (candidate.content?.parts) {
+      console.log('[ResponseTransformer] Gemini parts:', JSON.stringify(candidate.content.parts.map(p => {
+        const keys = Object.keys(p);
+        if ('thought' in p) return { type: 'thought', thought: p.thought };
+        if ('modelOutputThought' in p) return { type: 'modelOutputThought', content: p.modelOutputThought };
+        if ('text' in p) return { type: 'text', textLength: p.text?.length };
+        if ('functionCall' in p) return { type: 'functionCall', name: (p as any).functionCall?.name };
+        return { type: 'unknown', keys };
+      })));
+    }
+
+    console.log('[ResponseTransformer] exposeThinkingToClient:', exposeThinkingToClient);
+
     // 使用原有的ContentTransformer处理
     return await ContentTransformer.processToolCallsAndResults(
       candidate.content.parts,
@@ -227,8 +247,14 @@ export class ResponseTransformer {
       cache_read_input_tokens: metadata?.cachedContentTokenCount || 0
     };
 
-    // 添加thinking tokens计数
-    if (includeThinkingTokens) {
+    // 添加thinking tokens计数（如果有）
+    if (includeThinkingTokens && metadata) {
+      // Gemini API可能在usageMetadata中返回thoughtsTokenCount
+      if ('thoughtsTokenCount' in metadata) {
+        usage.thoughts_output_tokens = (metadata as any).thoughtsTokenCount;
+      }
+
+      // 或者从响应中提取thinking内容
       const thinkingData = ThinkingTransformer.extractThinkingFromResponse(geminiResponse);
       if (thinkingData?.thoughtsTokenCount) {
         usage.thoughts_output_tokens = thinkingData.thoughtsTokenCount;
@@ -238,6 +264,7 @@ export class ResponseTransformer {
     // 计算总计数
     if (metadata?.totalTokenCount !== undefined) {
       const calculated = usage.input_tokens + usage.output_tokens + (usage.thoughts_output_tokens || 0);
+      // 允许小误差
       if (Math.abs(calculated - metadata.totalTokenCount) < 10) {
         usage.total_tokens = metadata.totalTokenCount;
       }

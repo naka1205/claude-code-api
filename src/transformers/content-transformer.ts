@@ -126,7 +126,8 @@ export class ContentTransformer {
         }
 
       case 'thinking':
-        // 处理thinking内容
+        // 处理thinking内容 - 将其作为带有thought标记的特殊part
+        // 正确的Gemini格式是: { "text": "thinking content", "thought": true }
         if (item.thinking) {
           return {
             text: item.thinking,
@@ -288,7 +289,16 @@ export class ContentTransformer {
   }
 
   /**
-   * 处理工具调用和响应的配对（与BAK版本兼容）
+   * 生成thinking签名
+   */
+  private static generateThinkingSignature(thinkingContent: string): string {
+    const timestamp = Date.now().toString(36);
+    const hash = this.simpleHash(thinkingContent);
+    return `sig_${hash}_${timestamp}`;
+  }
+
+  /**
+   * 处理工具调用和响应的配对（优化版本，参考BAK源码）
    */
   static async processToolCallsAndResults(
     parts: GeminiPart[],
@@ -298,14 +308,100 @@ export class ContentTransformer {
     const toolCallMap = new Map<string, string>(); // functionCall name -> tool_use_id
     const processedToolCalls = new Set<string>(); // 防重复处理的工具调用集合
 
+    // 临时文本缓冲区
+    let textBuffer = '';
+
+    // 辅助函数：刷新文本缓冲区
+    const flushText = () => {
+      if (textBuffer.trim()) {
+        blocks.push({
+          type: 'text',
+          text: textBuffer.trim()
+        });
+        textBuffer = '';
+      }
+    };
+
+    console.log('[ContentTransformer] Processing parts, exposeThinkingToClient:', exposeThinkingToClient);
+    console.log('[ContentTransformer] Total parts:', parts.length);
+    console.log('[ContentTransformer] Part types:', parts.map(p => {
+      const keys = Object.keys(p);
+      if ('thought' in p) return 'thought';
+      if ('modelOutputThought' in p) return 'modelOutputThought';
+      if ('text' in p) return 'text';
+      if ('functionCall' in p) return 'functionCall';
+      if ('functionResponse' in p) return 'functionResponse';
+      return `unknown(${keys.join(',')})`;
+    }));
+
     // 第一轮：处理所有内容并创建工具调用映射
     for (const part of parts) {
+      // 根据官方文档，思考内容是一个只包含thought字段的part对象
+      // 格式为：{ "thought": { "content": "...", "redacted": true/false } }
+      if ('thought' in part && part.thought && !('text' in part) && !('functionCall' in part)) {
+        console.log('[ContentTransformer] Found thought part (full object):', JSON.stringify(part));
+
+        const thoughtObj = part.thought as { content?: string; redacted?: boolean } | string;
+
+        let thoughtContent: string;
+        if (typeof thoughtObj === 'object' && thoughtObj !== null && 'content' in thoughtObj) {
+          thoughtContent = thoughtObj.content || '';
+          console.log('[ContentTransformer] Extracted thought content from object:', thoughtContent.substring(0, 100) + '...');
+        } else if (typeof thoughtObj === 'string') {
+          thoughtContent = thoughtObj;
+          console.log('[ContentTransformer] Found thought content (string):', thoughtContent.substring(0, 100) + '...');
+        } else {
+          console.log('[ContentTransformer] Unknown thought format:', JSON.stringify(thoughtObj));
+          continue;
+        }
+
+        // 刷新之前的文本
+        flushText();
+
+        // 思考内容，只有在exposeThinkingToClient为true时才处理
+        if (exposeThinkingToClient && thoughtContent) {
+          console.log('[ContentTransformer] Adding thinking block with content length:', thoughtContent.length);
+
+          // 创建思考内容块
+          blocks.push({
+            type: 'thinking',
+            thinking: thoughtContent,
+            signature: this.generateThinkingSignature(thoughtContent)
+          } as any);
+        } else if (!exposeThinkingToClient) {
+          console.log('[ContentTransformer] Skipping thinking content (exposeThinkingToClient=false)');
+        }
+        continue;
+      }
+
+      // 检查modelOutputThought字段（Gemini 2.5的另一种格式）
+      if ('modelOutputThought' in part && part.modelOutputThought) {
+        console.log('[ContentTransformer] Found modelOutputThought:', part.modelOutputThought);
+
+        // 刷新之前的文本
+        flushText();
+
+        if (exposeThinkingToClient) {
+          const thoughtContent = typeof part.modelOutputThought === 'string'
+            ? part.modelOutputThought
+            : String(part.modelOutputThought);
+
+          blocks.push({
+            type: 'thinking',
+            thinking: thoughtContent,
+            signature: this.generateThinkingSignature(thoughtContent)
+          } as any);
+        }
+        continue;
+      }
+
+      // 处理普通文本内容
       if ('text' in part && part.text !== undefined) {
-        // 检查是否是纯thinking内容（通过thought标记）
+        // 检查是否被标记为思考内容（向后兼容）
         const isPureThinkingContent = (part as any).thought === true;
 
         if (isPureThinkingContent) {
-          // 纯thinking内容，只有在exposeThinkingToClient为true时才处理
+          flushText();
           if (exposeThinkingToClient) {
             blocks.push({
               type: 'thinking',
@@ -314,13 +410,13 @@ export class ContentTransformer {
             } as any);
           }
         } else {
-          // 普通文本内容
-          blocks.push({
-            type: 'text',
-            text: part.text
-          });
+          // 累积普通文本到缓冲区
+          textBuffer += part.text;
         }
       } else if ('functionCall' in part && part.functionCall) {
+        // 刷新文本缓冲区
+        flushText();
+
         // 生成工具调用哈希以检测重复
         const toolHash = this.generateToolCallHash(part.functionCall.name, part.functionCall.args);
 
@@ -353,6 +449,9 @@ export class ContentTransformer {
         } as any);
       }
     }
+
+    // 刷新最后的文本缓冲区
+    flushText();
 
     // 第二轮：处理工具响应（不自动生成特殊工具响应，等待实际响应）
     const processedResponses = new Set<string>(); // 防重复处理的工具响应集合
@@ -390,14 +489,5 @@ export class ContentTransformer {
     }
 
     return blocks;
-  }
-
-  /**
-   * 生成thinking签名
-   */
-  private static generateThinkingSignature(thinkingContent: string): string {
-    const timestamp = Date.now().toString(36);
-    const hash = this.simpleHash(thinkingContent);
-    return `sig_${hash}_${timestamp}`;
   }
 }
