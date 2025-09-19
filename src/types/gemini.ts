@@ -46,24 +46,13 @@ export interface GeminiFunctionResponsePart {
 }
 
 /**
- * Gemini 思考内容部分
- */
-export interface GeminiThoughtPart {
-  thought: {
-    content: string;
-    redacted?: boolean;
-  };
-}
-
-/**
  * Gemini 部分类型
  */
 export type GeminiPart =
   | GeminiTextPart
   | GeminiInlineDataPart
   | GeminiFunctionCallPart
-  | GeminiFunctionResponsePart
-  | GeminiThoughtPart;
+  | GeminiFunctionResponsePart;
 
 /**
  * Gemini 内容
@@ -87,11 +76,6 @@ export interface GeminiGenerationConfig {
   frequencyPenalty?: number;
   responseMimeType?: string;
   responseSchema?: any;
-  thinkingConfig?: {
-    includeThoughts?: boolean;
-    thinkingBudget?: number;
-    exposeThoughtsToClient?: boolean;
-  };
 }
 
 /**

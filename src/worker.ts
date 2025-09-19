@@ -7,6 +7,7 @@ import { RequestHandler } from './handler';
 import { createCorsHeaders, createResponseHeaders } from './utils/cors';
 import { generateRequestId, headersToObject } from './utils/common';
 import { createErrorResponse } from './utils/response';
+import { Logger } from './utils/logger';
 
 export interface Env {
   KV?: KVNamespace;  // Make KV optional
@@ -47,6 +48,7 @@ export default {
       const pathname = url.pathname;
 
       const requestId = generateRequestId();
+
       // Convert URLSearchParams and Headers for Workers environment
       const queryParams: Record<string, string> = {};
       url.searchParams.forEach((value, key) => {
@@ -54,6 +56,13 @@ export default {
       });
 
       const headerObj = headersToObject(request.headers);
+
+      // 记录请求信息
+      Logger.info('Worker', `Incoming request: ${method} ${pathname}`, {
+        requestId,
+        headers: headerObj,
+        queryParams
+      });
 
       
 
@@ -64,6 +73,34 @@ export default {
       if (method === 'OPTIONS') {
         const headers = createCorsHeaders();
         return new Response(null, { status: 204, headers });
+      }
+
+      // 日志端点 - 获取所有日志
+      if (method === 'GET' && pathname === '/logs') {
+        const headers = corsEnabled
+          ? createResponseHeaders('text/plain')
+          : new Headers({ 'Content-Type': 'text/plain', 'Cache-Control': 'no-cache' });
+
+        const logs = Logger.getLogsAsText();
+        Logger.info('Worker', `Returning ${Logger.getLogs().length} log entries`);
+
+        return new Response(logs || 'No logs available', {
+          status: 200,
+          headers
+        });
+      }
+
+      // 日志端点 - 清空日志
+      if (method === 'DELETE' && pathname === '/logs') {
+        Logger.clear();
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json' });
+
+        return new Response(
+          JSON.stringify({ message: 'Logs cleared' }),
+          { status: 200, headers }
+        );
       }
 
       // Health check endpoint
@@ -104,19 +141,29 @@ export default {
 
       // Claude API compatibility endpoints
       if (method === 'POST' && pathname === '/v1/messages') {
-        return await handler.handleMessagesRequest(context, request, requestId);
+        Logger.info('Worker', 'Handling messages request', { requestId });
+        const response = await handler.handleMessagesRequest(context, request, requestId);
+        Logger.info('Worker', 'Messages request completed', {
+          requestId,
+          status: response.status
+        });
+        return response;
       }
 
       if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
+        Logger.info('Worker', 'Handling count tokens request', { requestId });
         return await handler.handleCountTokensRequest(context, request, requestId);
       }
 
       // 404 for unknown endpoints
-      
+      Logger.warn('Worker', `Unknown endpoint: ${method} ${pathname}`);
       return createErrorResponse(404, 'Not Found', corsEnabled);
 
     } catch (error) {
-      
+      Logger.error('Worker', 'Unhandled error', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       return createErrorResponse(500, 'Internal Server Error');
     }
   }

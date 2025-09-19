@@ -9,9 +9,12 @@ import {
   ClaudeTextContent,
   ClaudeImageContent,
   ClaudeDocumentContent,
-  ClaudeToolResult
+  ClaudeToolResult,
+  ClaudeThinkingBlock
 } from '../types/claude';
 import { GeminiPart, GeminiTextPart, GeminiInlineDataPart } from '../types/gemini';
+import { Logger } from '../utils/logger';
+import { ThinkingTransformer } from './thinking-transformer';
 
 export class ContentTransformer {
   private static functionCallMap = new Map<string, string>(); // callId -> functionName
@@ -126,14 +129,8 @@ export class ContentTransformer {
         }
 
       case 'thinking':
-        // 处理thinking内容 - 将其作为带有thought标记的特殊part
-        // 正确的Gemini格式是: { "text": "thinking content", "thought": true }
-        if (item.thinking) {
-          return {
-            text: item.thinking,
-            thought: true
-          } as any;
-        }
+        // Claude的thinking内容不应该发送给Gemini
+        // 这是Claude特有的内容类型，Gemini不支持
         return null;
 
       default:
@@ -289,16 +286,7 @@ export class ContentTransformer {
   }
 
   /**
-   * 生成thinking签名
-   */
-  private static generateThinkingSignature(thinkingContent: string): string {
-    const timestamp = Date.now().toString(36);
-    const hash = this.simpleHash(thinkingContent);
-    return `sig_${hash}_${timestamp}`;
-  }
-
-  /**
-   * 处理工具调用和响应的配对（优化版本，参考BAK源码）
+   * 处理工具调用和响应的配对（与BAK版本兼容）
    */
   static async processToolCallsAndResults(
     parts: GeminiPart[],
@@ -308,137 +296,43 @@ export class ContentTransformer {
     const toolCallMap = new Map<string, string>(); // functionCall name -> tool_use_id
     const processedToolCalls = new Set<string>(); // 防重复处理的工具调用集合
 
-    // 临时文本缓冲区
-    let textBuffer = '';
+    // 收集所有thinking内容，合并为单个block
+    const thinkingParts: string[] = [];
+    const textParts: string[] = [];
 
-    // 辅助函数：刷新文本缓冲区
-    const flushText = () => {
-      if (textBuffer.trim()) {
-        blocks.push({
-          type: 'text',
-          text: textBuffer.trim()
-        });
-        textBuffer = '';
-      }
-    };
-
-    console.log('[ContentTransformer] Processing parts, exposeThinkingToClient:', exposeThinkingToClient);
-    console.log('[ContentTransformer] Total parts:', parts.length);
-    console.log('[ContentTransformer] Part types:', parts.map(p => {
-      const keys = Object.keys(p);
-      if ('thought' in p) return 'thought';
-      if ('modelOutputThought' in p) return 'modelOutputThought';
-      if ('text' in p) return 'text';
-      if ('functionCall' in p) return 'functionCall';
-      if ('functionResponse' in p) return 'functionResponse';
-      return `unknown(${keys.join(',')})`;
-    }));
-
-    // 第一轮：处理所有内容并创建工具调用映射
+    // 第一轮：按照Gemini的标记分类内容
     for (const part of parts) {
-      // 根据官方文档，思考内容是一个只包含thought字段的part对象
-      // 格式为：{ "thought": { "content": "...", "redacted": true/false } }
-      if ('thought' in part && part.thought && !('text' in part) && !('functionCall' in part)) {
-        console.log('[ContentTransformer] Found thought part (full object):', JSON.stringify(part));
-
-        const thoughtObj = part.thought as { content?: string; redacted?: boolean } | string;
-
-        let thoughtContent: string;
-        if (typeof thoughtObj === 'object' && thoughtObj !== null && 'content' in thoughtObj) {
-          thoughtContent = thoughtObj.content || '';
-          console.log('[ContentTransformer] Extracted thought content from object:', thoughtContent.substring(0, 100) + '...');
-        } else if (typeof thoughtObj === 'string') {
-          thoughtContent = thoughtObj;
-          console.log('[ContentTransformer] Found thought content (string):', thoughtContent.substring(0, 100) + '...');
-        } else {
-          console.log('[ContentTransformer] Unknown thought format:', JSON.stringify(thoughtObj));
-          continue;
-        }
-
-        // 刷新之前的文本
-        flushText();
-
-        // 思考内容，只有在exposeThinkingToClient为true时才处理
-        if (exposeThinkingToClient && thoughtContent) {
-          console.log('[ContentTransformer] Adding thinking block with content length:', thoughtContent.length);
-
-          // 创建思考内容块
-          blocks.push({
-            type: 'thinking',
-            thinking: thoughtContent,
-            signature: this.generateThinkingSignature(thoughtContent)
-          } as any);
-        } else if (!exposeThinkingToClient) {
-          console.log('[ContentTransformer] Skipping thinking content (exposeThinkingToClient=false)');
-        }
-        continue;
-      }
-
-      // 检查modelOutputThought字段（Gemini 2.5的另一种格式）
-      if ('modelOutputThought' in part && part.modelOutputThought) {
-        console.log('[ContentTransformer] Found modelOutputThought:', part.modelOutputThought);
-
-        // 刷新之前的文本
-        flushText();
-
-        if (exposeThinkingToClient) {
-          const thoughtContent = typeof part.modelOutputThought === 'string'
-            ? part.modelOutputThought
-            : String(part.modelOutputThought);
-
-          blocks.push({
-            type: 'thinking',
-            thinking: thoughtContent,
-            signature: this.generateThinkingSignature(thoughtContent)
-          } as any);
-        }
+      // 处理标记为thought的内容
+      if ('thought' in part && 'text' in part) {
+        thinkingParts.push((part as any).text);
         continue;
       }
 
       // 处理普通文本内容
-      if ('text' in part && part.text !== undefined) {
-        // 检查是否被标记为思考内容（向后兼容）
-        const isPureThinkingContent = (part as any).thought === true;
+      if ('text' in part && part.text !== undefined && !('thought' in part)) {
+        textParts.push(part.text);
+        continue;
+      }
 
-        if (isPureThinkingContent) {
-          flushText();
-          if (exposeThinkingToClient) {
-            blocks.push({
-              type: 'thinking',
-              thinking: part.text,
-              signature: this.generateThinkingSignature(part.text)
-            } as any);
-          }
-        } else {
-          // 累积普通文本到缓冲区
-          textBuffer += part.text;
-        }
-      } else if ('functionCall' in part && part.functionCall) {
-        // 刷新文本缓冲区
-        flushText();
-
-        // 生成工具调用哈希以检测重复
+      // 处理工具调用
+      if ('functionCall' in part && part.functionCall) {
         const toolHash = this.generateToolCallHash(part.functionCall.name, part.functionCall.args);
 
-        // 检查是否已经处理过这个工具调用
         if (processedToolCalls.has(toolHash)) {
-          continue; // 跳过重复的工具调用
+          continue;
         }
         processedToolCalls.add(toolHash);
 
         const cached = this.toolCallCache.get(toolHash);
-
         let toolUseId: string;
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-          // 使用缓存的ID
           toolUseId = cached.id;
         } else {
-          // 生成新ID并缓存
           toolUseId = this.generateToolUseId();
           this.toolCallCache.set(toolHash, { id: toolUseId, timestamp: Date.now() });
         }
 
-        toolCallMap.set(part.functionCall.name + '_' + toolUseId, toolUseId); // 使用组合键避免冲突
+        toolCallMap.set(part.functionCall.name + '_' + toolUseId, toolUseId);
         this.functionCallMap.set(toolUseId, part.functionCall.name);
 
         blocks.push({
@@ -450,28 +344,65 @@ export class ContentTransformer {
       }
     }
 
-    // 刷新最后的文本缓冲区
-    flushText();
+    // 第二轮：处理thinking内容
+    if (thinkingParts.length > 0) {
+      const combinedThinking = thinkingParts.join('\n\n');
 
-    // 第二轮：处理工具响应（不自动生成特殊工具响应，等待实际响应）
-    const processedResponses = new Set<string>(); // 防重复处理的工具响应集合
+      if (exposeThinkingToClient) {
+        // 当客户端启用thinking时，分离thinking和response
+        const separated = ThinkingTransformer.separateThinkingAndResponse(combinedThinking);
 
+        if (separated.thinking.trim()) {
+          const thinkingBlock: ClaudeThinkingBlock = {
+            type: 'thinking',
+            thinking: separated.thinking,
+            signature: this.generateThinkingSignature(separated.thinking)
+          };
+          blocks.push(thinkingBlock);
+        }
+
+        if (separated.response.trim()) {
+          blocks.push({
+            type: 'text',
+            text: separated.response
+          });
+        }
+      } else {
+        // 当thinking不暴露给客户端时，只显示response部分
+        const separated = ThinkingTransformer.separateThinkingAndResponse(combinedThinking);
+        const responseText = separated.response.trim() || combinedThinking;
+
+        blocks.push({
+          type: 'text',
+          text: responseText
+        });
+      }
+    }
+
+    // 第三轮：处理普通文本内容
+    if (textParts.length > 0) {
+      const combinedText = textParts.join('\n\n');
+      blocks.push({
+        type: 'text',
+        text: combinedText
+      });
+    }
+
+    // 第四轮：处理工具响应
+    const processedResponses = new Set<string>();
     for (const part of parts) {
       if ('functionResponse' in part && part.functionResponse) {
-        // 查找对应的工具调用ID
         const matchingToolUseId = Array.from(toolCallMap.entries())
           .find(([key, id]) => key.includes(part.functionResponse.name))?.[1];
 
         const toolUseId = matchingToolUseId || this.generateToolUseId();
-
-        // 生成响应哈希避免重复处理
         const responseHash = `${part.functionResponse.name}_${toolUseId}_${this.simpleHash(JSON.stringify(part.functionResponse.response))}`;
+
         if (processedResponses.has(responseHash)) {
-          continue; // 跳过重复的工具响应
+          continue;
         }
         processedResponses.add(responseHash);
 
-        // 检查是否为错误响应
         const response = part.functionResponse.response as any;
         const isError = !!response?.error;
 
@@ -488,6 +419,16 @@ export class ContentTransformer {
       }
     }
 
+    Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
     return blocks;
+  }
+
+  /**
+   * 生成thinking签名
+   */
+  private static generateThinkingSignature(thinkingContent: string): string {
+    const timestamp = Date.now().toString(36);
+    const hash = this.simpleHash(thinkingContent);
+    return `sig_${hash}_${timestamp}`;
   }
 }

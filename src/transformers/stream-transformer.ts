@@ -7,10 +7,12 @@ import {
   ClaudeStreamEvent,
   ClaudeResponse,
   ClaudeContentBlock,
-  ClaudeTextBlock
+  ClaudeTextBlock,
+  ClaudeThinkingBlock
 } from '../types/claude';
 import { GeminiStreamResponse, GeminiPart } from '../types/gemini';
 import { ToolTransformer } from './tool-transformer';
+import { ThinkingTransformer } from './thinking-transformer';
 
 interface StreamBuffer {
   textContent: string;
@@ -66,25 +68,6 @@ class StreamStateManager {
     this.lastTextContent = text;
     this.buffer.textContent += text;
     return text;
-  }
-
-  /**
-   * 处理增量思考内容
-   */
-  processIncrementalThinking(thinking: string | { content: string }): string | null {
-    if (!thinking) return null;
-
-    const thinkingText = typeof thinking === 'object' && 'content' in thinking
-      ? thinking.content
-      : typeof thinking === 'string'
-      ? thinking
-      : String(thinking);
-
-    if (!thinkingText) return null;
-
-    // 累积思考内容
-    this.buffer.thinkingContent = (this.buffer.thinkingContent || '') + thinkingText;
-    return thinkingText;
   }
 
   /**
@@ -228,8 +211,6 @@ export class StreamTransformer {
     const messageId = this.generateClaudeMessageId();
     let pingInterval: any = null;
     let currentBlockIndex = 0;
-    let hasStartedThinkingBlock = false;
-    let currentThinkingIndex = 0;
 
     // 使用增强的状态管理器 - 恢复自Node.js版本
     const stateManager = new StreamStateManager();
@@ -292,29 +273,21 @@ export class StreamTransformer {
               continue;
             }
 
-            // 修复JSON解析错误：处理不完整的JSON块
-            if (data === '{' || data.endsWith(',')) {
-              // 不完整的JSON块，等待更多数据
-              continue;
-            }
-
             try {
               const geminiChunk = JSON.parse(data) as GeminiStreamResponse;
 
               // 详细调试：记录Gemini原始返回内容
               if (geminiChunk.candidates?.[0]?.content?.parts) {
-                console.log('[StreamDebug] Gemini parts structure:', JSON.stringify(geminiChunk.candidates[0].content.parts, null, 2));
-                // 检查每个part的详细结构
-                geminiChunk.candidates[0].content.parts.forEach((part, index) => {
-                  console.log(`[StreamDebug] Part ${index}:`, {
-                    keys: Object.keys(part),
-                    hasText: 'text' in part,
-                    hasThought: 'thought' in part,
-                    thoughtValue: part.thought,
-                    hasThoughtSignature: 'thoughtSignature' in part,
-                    hasFunctionCall: 'functionCall' in part
-                  });
-                });
+                console.log(`[GeminiDebug] Raw Gemini response parts:`, JSON.stringify(geminiChunk.candidates[0].content.parts, null, 2));
+
+                console.log(`[StreamDebug] Gemini parts structure:`, JSON.stringify(geminiChunk.candidates[0].content.parts.map((p: any) => ({
+                  hasText: 'text' in p,
+                  hasThought: 'thought' in p,
+                  textLength: p.text?.length || 0,
+                  thoughtLength: p.thought?.content?.length || p.thought?.length || 0,
+                  thoughtRedacted: p.thought?.redacted,
+                  keys: Object.keys(p)
+                })), null, 2));
               }
 
               // 首次消息，发送message_start
@@ -359,69 +332,16 @@ export class StreamTransformer {
               // 处理文本内容和工具调用
               if (geminiChunk.candidates?.[0]?.content?.parts) {
                 for (const part of geminiChunk.candidates[0].content.parts) {
-                  // 检查是否是思考内容（基于BAK版本的正确逻辑）
-                  if ('text' in part && 'thought' in part && part.thought === true) {
-                    // 这是思考内容，只有在exposeThinkingToClient为true时才处理
-                    if (!exposeThinkingToClient) {
-                      continue; // 跳过思考内容
-                    }
+                  if ('text' in part && part.text && !('thought' in part)) {
+                    // 只处理非思考的普通文本内容
+                    // thoughtSignature字段的存在不影响这是正常的对话内容
+                    console.log(`[StreamDebug] Processing normal text content: ${part.text.length} chars, hasThoughtSignature: ${'thoughtSignature' in part}`);
 
-                    const incrementalThinking = stateManager.processIncrementalThinking(part.text);
-                    if (!incrementalThinking) {
-                      continue; // 跳过无增量的内容
-                    }
-
-                    // 如果还没有创建thinking块，先创建
-                    if (!hasStartedThinkingBlock) {
-                      const thinkingBlockStart: ClaudeStreamEvent = {
-                        type: 'content_block_start',
-                        index: currentContent.length,
-                        content_block: {
-                          type: 'thinking',
-                          thinking: ''
-                        } as any
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
-                      hasStartedThinkingBlock = true;
-                      currentThinkingIndex = currentContent.length;
-                      currentContent.push({ type: 'thinking', thinking: '' } as any);
-                    }
-
-                    // 发送thinking增量
-                    const thinkingDelta: ClaudeStreamEvent = {
-                      type: 'content_block_delta',
-                      index: currentThinkingIndex,
-                      delta: {
-                        type: 'thinking_delta',
-                        thinking: incrementalThinking
-                      } as any
-                    };
-                    controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
-
-                    // 更新当前内容
-                    if (currentContent[currentThinkingIndex]) {
-                      (currentContent[currentThinkingIndex] as any).thinking += incrementalThinking;
-                    }
-
-                    continue;
-                  }
-
-                  // 处理thoughtSignature（加密的上下文令牌）
-                  if ('thoughtSignature' in part && part.thoughtSignature) {
-                    // thoughtSignature是加密的上下文令牌，用于多轮对话的上下文维持
-                    // 暂时跳过，不作为思考内容显示（未来可用于上下文保存）
-                    console.log('[StreamDebug] Found thoughtSignature (context token), not exposing to client');
-                    continue;
-                  }
-
-                  if ('text' in part && part.text) {
                     // 使用状态管理器进行增量检测 - 恢复自Node.js版本
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (!incrementalText) {
                       continue; // 跳过无增量的重复内容
                     }
-
-
 
                     // 发送文本增量
                     const delta: ClaudeStreamEvent = {
@@ -435,6 +355,88 @@ export class StreamTransformer {
 
                     controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
                     currentTextContent += incrementalText;
+                  } else if ('thought' in part && 'text' in part) {
+                    // 正确处理Gemini思考格式 - thought是标记，思考内容在text字段中
+                    console.log(`[StreamDebug] Processing thinking content: ${part.text.length} chars`);
+
+                    // 分离思考内容和对话回复
+                    const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(part.text);
+
+                    if (exposeThinkingToClient && thinking.trim()) {
+                      console.log(`[StreamDebug] Creating thinking block: ${thinking.length} chars`);
+
+                      // 发送thinking content block
+                      const thinkingBlockStart: ClaudeStreamEvent = {
+                        type: 'content_block_start',
+                        index: currentBlockIndex,
+                        content_block: {
+                          type: 'thinking',
+                          thinking: '',
+                          signature: ThinkingTransformer.generateThinkingSignature(thinking)
+                        } as ClaudeThinkingBlock
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
+
+                      const thinkingDelta: ClaudeStreamEvent = {
+                        type: 'content_block_delta',
+                        index: currentBlockIndex,
+                        delta: {
+                          type: 'thinking_delta',
+                          thinking: thinking
+                        }
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
+
+                      const thinkingBlockStop: ClaudeStreamEvent = {
+                        type: 'content_block_stop',
+                        index: currentBlockIndex
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
+
+                      currentBlockIndex++;
+                    }
+
+                    // 发送对话回复内容（如果有）
+                    if (response && response.trim()) {
+                      console.log(`[StreamDebug] Creating response text block: ${response.length} chars`);
+
+                      // 不使用状态管理器检测，因为这是从thinking分离出的新内容
+                      // 直接发送响应内容，确保对话回复能够显示
+
+                      // 如果没有发送过任何文本内容块，先发送content_block_start
+                      if (currentBlockIndex === 0 || (exposeThinkingToClient && currentBlockIndex === 1)) {
+                        const responseBlockStart: ClaudeStreamEvent = {
+                          type: 'content_block_start',
+                          index: currentBlockIndex,
+                          content_block: {
+                            type: 'text',
+                            text: ''
+                          } as ClaudeTextBlock
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(responseBlockStart)}\n\n`));
+                      }
+
+                      const responseDelta: ClaudeStreamEvent = {
+                        type: 'content_block_delta',
+                        index: currentBlockIndex,
+                        delta: {
+                          type: 'text_delta',
+                          text: response
+                        }
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(responseDelta)}\n\n`));
+
+                      const responseBlockStop: ClaudeStreamEvent = {
+                        type: 'content_block_stop',
+                        index: currentBlockIndex
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(responseBlockStop)}\n\n`));
+
+                      currentBlockIndex++;
+                      currentTextContent += response;
+                    }
+
+                    continue; // 思考内容处理完毕
                   } else if ('functionCall' in part && part.functionCall) {
                     // 使用状态管理器进行函数调用去重
                     const functionCall = part.functionCall;
@@ -541,17 +543,6 @@ export class StreamTransformer {
               // 检查是否完成
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
                 streamFinished = true; // 标记流已完成，防止重复处理
-
-                // 如果有未关闭的思考块，先关闭它
-                if (hasStartedThinkingBlock) {
-                  const thinkingBlockStop: ClaudeStreamEvent = {
-                    type: 'content_block_stop',
-                    index: currentThinkingIndex
-                  };
-                  controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
-                  hasStartedThinkingBlock = false;
-                }
-
                 // 发送content_block_stop（只有当前块是文本块时）
                 if (currentBlockIndex === 0 || (currentBlockIndex > 0 && currentTextContent)) {
                   const blockStop: ClaudeStreamEvent = {
@@ -584,19 +575,8 @@ export class StreamTransformer {
                 };
                 controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`));
               }
-            } catch (parseError) {
-              console.error('[StreamTransformer] Main JSON parse error:', parseError);
-              console.error('[StreamTransformer] Failed data:', data);
-              // 发送错误事件而不是忽略
-              const errorEvent: ClaudeStreamEvent = {
-                type: 'error',
-                error: {
-                  type: 'invalid_request_error',
-                  message: `Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : 'Parse error'}`
-                }
-              };
-              controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`));
-              return;
+            } catch (e) {
+               
             }
           }
         } catch (error) {
@@ -650,16 +630,37 @@ export class StreamTransformer {
                         };
                         controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
                       }
+                    } else if ('thought' in part && (part as any).thought) {
+                      // 正确处理思考内容 - 根据配置决定是否暴露
+                      if (exposeThinkingToClient) {
+                        console.log(`[StreamDebug] Creating thinking block in flush: ${(part as any).thought.length} chars`);
+
+                        // 在flush阶段简化处理，直接作为完整thinking block
+                        const thinkingBlockStart: ClaudeStreamEvent = {
+                          type: 'content_block_start',
+                          index: 0,
+                          content_block: {
+                            type: 'thinking',
+                            thinking: (part as any).thought,
+                            signature: ThinkingTransformer.generateThinkingSignature((part as any).thought)
+                          } as ClaudeThinkingBlock
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
+
+                        const thinkingBlockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: 0
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
+                      } else {
+                        console.log(`[StreamDebug] Filtering out thought content in flush: ${(part as any).thought.length} chars`);
+                      }
+                      continue;
                     }
                   }
                 }
-              } catch (parseError) {
-                console.error('[StreamTransformer] JSON parse error:', parseError);
-                console.error('[StreamTransformer] Failed data:', data);
-                console.error('[StreamTransformer] Data length:', data.length);
-                console.error('[StreamTransformer] First 100 chars:', data.substring(0, 100));
-                // 跳过解析失败的数据，继续处理后续流
-                // continue; // 注释掉continue，使用其他方式跳过
+              } catch (e) {
+                 
               }
             }
           } catch (e) {

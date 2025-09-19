@@ -1,20 +1,15 @@
 /**
- * Thinking转换器 - Cloudflare Workers版本
- * 处理Extended Thinking特性的转换
+ * Thinking转换器 - 正确处理Claude Extended Thinking与Gemini thinkingConfig的转换
+ * 基于BAK目录Node.js版本源码以及DOCS目录官方接口文档
  */
 
-import { ClaudeRequest } from '../types/claude';
-import { ModelMapper } from '../models';
+import { ClaudeRequest, ClaudeThinking } from '../types/claude';
 
 export interface ThinkingConfig {
-  thinkingBudget?: number;
+  thinkingBudget: number;
   includeThoughts?: boolean;
   exposeThoughtsToClient?: boolean;
-  exposeToClient?: boolean;  // 兼容性字段
-}
-
-export interface GeminiThinkingConfig {
-  thinkingBudget?: number;
+  exposeToClient?: boolean;  // 兼容性字段，用于向后兼容
 }
 
 export interface ThinkingRecommendation {
@@ -22,13 +17,6 @@ export interface ThinkingRecommendation {
   reason: string;
   suggestedBudget?: number;
   modelSupport: boolean;
-}
-
-export interface ModelThinkingLimits {
-  min: number;
-  max: number;
-  default: number;
-  canDisable: boolean;
 }
 
 export interface ComplexityAnalysis {
@@ -50,26 +38,32 @@ export class ThinkingTransformer {
   // 最大思考预算
   static readonly maxBudget = 32768;
 
-  // 基于官方文档和Gemini模型的限制配置
-  private static readonly THINKING_LIMITS: Record<string, ModelThinkingLimits> = {
+  // 基于官方文档的模型thinking限制配置 (docs/README.md:82-134行)
+  private static readonly THINKING_LIMITS: Record<string, {
+    min: number;
+    max: number;
+    default: number;
+    canDisable: boolean;
+  }> = {
     'gemini-2.5-pro': {
       min: 128,
       max: 32768,
-      default: -1,  // 动态预算
+      default: -1, // 动态预算
       canDisable: false
     },
     'gemini-2.5-flash': {
       min: 0,
       max: 24576,
-      default: -1,  // 动态预算
+      default: -1, // 动态预算
       canDisable: true
     },
     'gemini-2.5-flash-lite': {
       min: 512,
       max: 24576,
-      default: 0,   // 默认关闭
+      default: 0, // 默认关闭
       canDisable: true
-    },
+    }
+    // 注意: gemini-2.0系列不支持thinking功能
   };
 
   // 复杂度阈值
@@ -80,59 +74,53 @@ export class ThinkingTransformer {
   };
 
   /**
-   * 转换thinking配置 - 增强版本，支持自动判断和默认启用
+   * 转换Claude thinking配置为Gemini格式 (增强版本)
+   * 正确处理Claude Extended Thinking与Gemini thinkingConfig的转换
    */
   static transformThinking(
-    thinking: any,
+    claudeThinking: ClaudeThinking | undefined,
     geminiModel: string,
     claudeRequest: ClaudeRequest
   ): ThinkingConfig | null {
     // 获取模型限制
     const limits = this.THINKING_LIMITS[geminiModel];
-    const modelMapper = ModelMapper.getInstance();
-    const capabilities = modelMapper.getModelCapabilities(geminiModel);
-
-    if (!limits || !capabilities.supportsThinking) {
+    if (!limits) {
       return null; // 模型不支持thinking
     }
 
-    // 调试日志
-    console.log('[ThinkingTransformer] thinking:', JSON.stringify(thinking));
-
     // 如果明确指定了thinking配置
-    if (thinking) {
-      console.log('[ThinkingTransformer] thinking.type:', thinking.type);
-      if (thinking.type === 'enabled') {
-        let budget = thinking.budget_tokens || thinking.budget || this.calculateOptimalBudget(claudeRequest, geminiModel);
+    if (claudeThinking) {
+      if (claudeThinking.type === 'enabled') {
+        let budget = claudeThinking.budget_tokens || this.calculateOptimalBudget(claudeRequest, geminiModel);
 
         // 根据模型限制调整预算
         if (budget > 0) {
           budget = Math.max(limits.min, Math.min(budget, limits.max));
         } else {
-          budget = limits.default === -1 ? this.calculateOptimalBudget(claudeRequest, geminiModel) : limits.default;
+          budget = limits.default;
         }
 
         return {
           thinkingBudget: budget,
           includeThoughts: true,
-          exposeThoughtsToClient: true,
+          exposeThoughtsToClient: true,  // 恢复：客户端启用thinking时应该暴露
           exposeToClient: true  // 兼容性字段
         };
-      } else if (thinking.type === 'disabled') {
+      } else if (claudeThinking.type === 'disabled') {
         if (!limits.canDisable) {
           // 模型不允许禁用thinking，使用最小值
           return {
             thinkingBudget: limits.min,
             includeThoughts: false,
             exposeThoughtsToClient: false,
-            exposeToClient: false
+            exposeToClient: false  // 兼容性字段
           };
         }
         return {
           thinkingBudget: 0,
           includeThoughts: false,
           exposeThoughtsToClient: false,
-          exposeToClient: false
+          exposeToClient: false  // 兼容性字段
         };
       }
     }
@@ -149,16 +137,47 @@ export class ThinkingTransformer {
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
     }
 
-    // 如果自动计算的预算为0，返回null（不启用thinking）
-    if (budget === 0) {
-      return null;
-    }
-
     return {
       thinkingBudget: budget,
       includeThoughts: budget > 0,
-      exposeThoughtsToClient: budget > 0, // 有思考预算时暴露思考内容
-      exposeToClient: budget > 0 // 有思考预算时暴露给客户端
+      exposeThoughtsToClient: budget > 0,  // 根据是否启用thinking决定
+      exposeToClient: budget > 0  // 兼容性字段
+    };
+  }
+
+  /**
+   * 获取thinking配置建议
+   */
+  static getThinkingRecommendation(claudeRequest: ClaudeRequest, geminiModel: string): {
+    recommended: boolean;
+    reason: string;
+    estimatedBudget: number;
+    complexity: ComplexityAnalysis;
+  } {
+    const complexity = this.analyzeComplexity(claudeRequest);
+    const estimatedBudget = this.calculateOptimalBudget(claudeRequest, geminiModel);
+    const modelSupports = this.modelSupportsThinking(geminiModel);
+
+    let recommended = false;
+    let reason = '';
+
+    if (!modelSupports) {
+      reason = `模型 ${geminiModel} 不支持thinking功能`;
+    } else if (complexity.recommendation === 'enable') {
+      recommended = true;
+      reason = `请求复杂度较高 (${complexity.score}分)，建议启用thinking`;
+    } else if (complexity.recommendation === 'auto') {
+      recommended = complexity.score > this.complexityThresholds.medium;
+      reason = `请求复杂度中等 (${complexity.score}分)，${recommended ? '建议' : '可选择'}启用thinking`;
+    } else {
+      reason = `请求复杂度较低 (${complexity.score}分)，不建议启用thinking`;
+    }
+
+    return {
+      recommended,
+      reason,
+      estimatedBudget,
+      complexity
     };
   }
 
@@ -167,7 +186,7 @@ export class ThinkingTransformer {
    */
   private static calculateOptimalBudget(claudeRequest: ClaudeRequest, geminiModel: string): number {
     const limits = this.THINKING_LIMITS[geminiModel];
-    if (!limits) return this.defaultBudget;
+    if (!limits) return 0;
 
     const complexity = this.analyzeComplexity(claudeRequest);
 
@@ -189,7 +208,7 @@ export class ThinkingTransformer {
   }
 
   /**
-   * 分析请求复杂度 - 增强版本
+   * 分析请求复杂度 (优化版本)
    */
   static analyzeComplexity(claudeRequest: ClaudeRequest): ComplexityAnalysis {
     let score = 0;
@@ -207,7 +226,7 @@ export class ThinkingTransformer {
     let hasToolUse = false;
     let hasComplexContent = false;
 
-    claudeRequest.messages?.forEach(message => {
+    claudeRequest.messages.forEach(message => {
       roles.add(message.role);
 
       if (typeof message.content === 'string') {
@@ -215,16 +234,16 @@ export class ThinkingTransformer {
         if (this.containsComplexPatterns(message.content)) {
           hasComplexContent = true;
         }
-      } else if (Array.isArray(message.content)) {
-        message.content.forEach((block: any) => {
+      } else {
+        message.content.forEach(block => {
           if (block.type === 'text' && block.text) {
             totalTextLength += block.text.length;
             if (this.containsComplexPatterns(block.text)) {
               hasComplexContent = true;
             }
-          } else if (block.type === 'tool_use' || block.type === 'tool_result') {
-            hasToolUse = true;
           }
+          // 注意：ClaudeContent类型不包含tool_use和tool_result
+          // 这些类型存在于响应内容中，而不是请求内容中
         });
       }
     });
@@ -235,8 +254,9 @@ export class ThinkingTransformer {
 
     // 分析工具使用
     factors.toolCount = claudeRequest.tools ? claudeRequest.tools.length : 0;
-    if (hasToolUse) {
-      factors.toolCount = Math.max(factors.toolCount, 1);
+    // 工具使用的判断基于tools定义而不是消息内容
+    if (factors.toolCount > 0) {
+      hasToolUse = true;
     }
 
     // 分析是否需要推理
@@ -253,18 +273,8 @@ export class ThinkingTransformer {
     if (claudeRequest.system) {
       const systemText = typeof claudeRequest.system === 'string' ?
         claudeRequest.system :
-        (claudeRequest.system as any[]).map(b => b.text || '').join(' ');
+        claudeRequest.system.map(b => b.text || '').join(' ');
       score += Math.min(systemText.length / 200, 10);
-    }
-
-    // 检查是否有代码块或数学内容
-    const hasCodeBlocks = claudeRequest.messages?.some(msg => {
-      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-      return content.includes('```') || content.includes('function') || content.includes('class');
-    });
-
-    if (hasCodeBlocks) {
-      score += 15;
     }
 
     // 确定推荐
@@ -336,7 +346,7 @@ export class ThinkingTransformer {
    */
   private static hasCodingContent(claudeRequest: ClaudeRequest): boolean {
     const codeKeywords = /\b(function|class|import|return|if|else|for|while|def|var|let|const|编程|代码|函数|类|变量)\b/i;
-    const codePatterns = /```|`[^`]+`|<\/?\w+>|\{[\s\S]*\}/;
+    const codePatterns = /```|`[^`]+`|<\/\?\w+>|\{[\s\S]*\}/;
 
     return this.searchInRequest(claudeRequest, (text) =>
       codeKeywords.test(text) || codePatterns.test(text)
@@ -374,15 +384,15 @@ export class ThinkingTransformer {
     if (claudeRequest.system) {
       const systemText = typeof claudeRequest.system === 'string' ?
         claudeRequest.system :
-        (claudeRequest.system as any[]).map(b => b.text || '').join(' ');
+        claudeRequest.system.map(b => b.text || '').join(' ');
       if (predicate(systemText)) return true;
     }
 
     // 检查消息
-    for (const message of claudeRequest.messages || []) {
+    for (const message of claudeRequest.messages) {
       if (typeof message.content === 'string') {
         if (predicate(message.content)) return true;
-      } else if (Array.isArray(message.content)) {
+      } else {
         for (const block of message.content) {
           if (block.type === 'text' && block.text && predicate(block.text)) {
             return true;
@@ -395,65 +405,30 @@ export class ThinkingTransformer {
   }
 
   /**
-   * 判断是否为复杂工具
+   * 检查模型是否支持thinking (基于官方文档)
    */
-  private static isComplexTool(tool: any): boolean {
-    const complexToolNames = [
-      'code_interpreter',
-      'web_browser',
-      'data_analyzer',
-      'sql_executor',
-      'api_caller'
-    ];
-
-    return complexToolNames.some(name =>
-      tool.name?.toLowerCase().includes(name.toLowerCase())
-    );
+  static modelSupportsThinking(geminiModel: string): boolean {
+    return !!this.THINKING_LIMITS[geminiModel];
   }
 
   /**
-   * 获取thinking推荐配置 - 增强版本
+   * 创建思考配置模板 (符合Gemini API格式)
    */
-  static getThinkingRecommendation(
-    claudeRequest: ClaudeRequest,
-    geminiModel: string
-  ): ThinkingRecommendation & { complexity?: ComplexityAnalysis; estimatedBudget?: number } {
-    const complexity = this.analyzeComplexity(claudeRequest);
-    const estimatedBudget = this.calculateOptimalBudget(claudeRequest, geminiModel);
-    const modelSupports = this.modelSupportsThinking(geminiModel);
-
-    let recommended = false;
-    let reason = '';
-
-    if (!modelSupports) {
-      reason = `Model ${geminiModel} does not support thinking feature`;
-    } else if (complexity.recommendation === 'enable') {
-      recommended = true;
-      reason = `Request complexity is high (score: ${complexity.score}), thinking is recommended`;
-    } else if (complexity.recommendation === 'auto') {
-      recommended = complexity.score > this.complexityThresholds.medium;
-      reason = `Request complexity is moderate (score: ${complexity.score}), ${recommended ? 'thinking recommended' : 'thinking optional'}`;
-    } else {
-      reason = `Request complexity is low (score: ${complexity.score}), thinking not recommended`;
+  static createThinkingConfig(
+    enabled: boolean,
+    budget?: number,
+    exposeToClient: boolean = false  // 默认不暴露给客户端
+  ): ThinkingConfig | null {
+    if (!enabled) {
+      return {
+        thinkingBudget: 0 // 设为0禁用thinking
+      };
     }
 
     return {
-      recommended,
-      reason,
-      suggestedBudget: estimatedBudget,
-      modelSupport: modelSupports,
-      complexity,
-      estimatedBudget
+      thinkingBudget: budget || this.defaultBudget,
+      exposeThoughtsToClient: exposeToClient
     };
-  }
-
-  /**
-   * 检查模型是否支持thinking
-   */
-  static modelSupportsThinking(geminiModel: string): boolean {
-    const modelMapper = ModelMapper.getInstance();
-    const capabilities = modelMapper.getModelCapabilities(geminiModel);
-    return !!this.THINKING_LIMITS[geminiModel] && capabilities.supportsThinking;
   }
 
   /**
@@ -463,69 +438,27 @@ export class ThinkingTransformer {
     thoughts?: string;
     thoughtsTokenCount?: number;
   } | null {
-    console.log('[ThinkingTransformer] Extracting thinking from response');
-
     // 检查是否有thinking内容
     if (!response.candidates?.[0]?.content?.parts) {
-      console.log('[ThinkingTransformer] No parts found in response');
       return null;
     }
 
-    // 记录所有parts的类型
-    console.log('[ThinkingTransformer] Response parts:', response.candidates[0].content.parts.map((p: any) => {
-      const keys = Object.keys(p);
-      if ('thought' in p) return { type: 'thought', content: p.thought };
-      if ('text' in p) return { type: 'text', length: p.text?.length };
-      return { type: 'unknown', keys };
-    }));
-
     for (const part of response.candidates[0].content.parts) {
-      // 检查是否是思考内容（基于BAK版本的正确逻辑）
-      if ('text' in part && 'thought' in part && part.thought === true) {
-        console.log('[ThinkingTransformer] Found thinking content in part.text:', part.text);
+      if (part.thought) {
         return {
-          thoughts: part.text,
+          thoughts: part.thought,
           thoughtsTokenCount: part.thoughtTokenCount
-        };
-      }
-
-      // 检查是否有传统的thought字段（对象格式）
-      if (part.thought && typeof part.thought === 'object' && 'content' in part.thought) {
-        console.log('[ThinkingTransformer] Found thought object:', part.thought);
-        return {
-          thoughts: part.thought.content,
-          thoughtsTokenCount: part.thoughtTokenCount || part.thought?.tokenCount
-        };
-      }
-
-      // 检查thoughtSignature（加密上下文令牌，不是思考内容）
-      if (part.thoughtSignature) {
-        console.log('[ThinkingTransformer] Found thoughtSignature (context token), not exposing as thinking content');
-        // thoughtSignature不是思考内容，跳过
-        continue;
-      }
-
-      // 检查是否有modelOutputThought字段（Gemini 2.5的新格式）
-      if (part.modelOutputThought) {
-        console.log('[ThinkingTransformer] Found modelOutputThought:', part.modelOutputThought);
-        return {
-          thoughts: part.modelOutputThought,
-          thoughtsTokenCount: part.modelOutputThoughtTokenCount
         };
       }
     }
 
     // 检查usageMetadata中的thinking tokens
-    if (response.usageMetadata) {
-      console.log('[ThinkingTransformer] UsageMetadata:', response.usageMetadata);
-      if (response.usageMetadata.thoughtsTokenCount || response.usageMetadata.modelOutputThoughtTokenCount) {
-        return {
-          thoughtsTokenCount: response.usageMetadata.thoughtsTokenCount || response.usageMetadata.modelOutputThoughtTokenCount
-        };
-      }
+    if (response.usageMetadata?.thoughtsTokenCount) {
+      return {
+        thoughtsTokenCount: response.usageMetadata.thoughtsTokenCount
+      };
     }
 
-    console.log('[ThinkingTransformer] No thinking content found');
     return null;
   }
 
@@ -565,6 +498,194 @@ export class ThinkingTransformer {
       type: 'thinking',
       thinking: thinkingText,
       signature: this.generateThinkingSignature(thinkingText)
+    };
+  }
+
+  /**
+   * 从思考内容中分离对话回复
+   * 作为代理服务，只根据Gemini的返回格式进行转换，不做复杂的内容判断
+   */
+  static separateThinkingAndResponse(thinkingText: string): {
+    thinking: string;
+    response: string;
+  } {
+    // 简化逻辑：对于Gemini标记为thought的内容，默认保持为thinking
+    // 只在有明确分隔符的情况下才分离
+
+    const explicitSeparators = [
+      /\n\n---+\s*(?:RESPONSE|FINAL RESPONSE|回复|最终回复)\s*---+\s*\n\n/i,
+      /\n\n##\s*(?:Response|Final Response|回复|最终回复)\s*\n\n/i
+    ];
+
+    for (const separator of explicitSeparators) {
+      const match = thinkingText.match(separator);
+      if (match && match.index) {
+        const thinking = thinkingText.substring(0, match.index).trim();
+        const response = thinkingText.substring(match.index + match[0].length).trim();
+
+        if (thinking && response) {
+          return { thinking, response };
+        }
+      }
+    }
+
+    // 默认情况：标记为thought的内容保持为thinking
+    return {
+      thinking: thinkingText,
+      response: ''
+    };
+  }
+
+  /**
+   * 判断文本是否是简单的回复内容
+   */
+  private static isSimpleResponse(text: string): boolean {
+    // 去除首尾空白
+    const trimmed = text.trim();
+
+    // 检查是否包含明确的回复标记
+    const responseIndicators = [
+      /^(?:Here's|这里是|以下是)/i,
+      /^(?:To answer|回答|为了回答)/i,
+      /^(?:I'll|我将|我会)/i,
+      /^(?:Let me|让我)/i,
+      /^(?:Based on|基于)/i,
+      /^(?:After|经过)/i
+    ];
+
+    // 如果以回复标记开始，很可能是回复
+    const startsWithResponse = responseIndicators.some(pattern => pattern.test(trimmed));
+
+    // 检查是否不包含明确的思考过程标记
+    const noThinkingMarkers = !this.containsThinkingPatterns(trimmed);
+
+    // 检查是否是较短的陈述性内容
+    const isShortStatement = trimmed.length < 300;
+
+    // 检查是否包含完整的句子结构
+    const hasCompleteSentences = /[.。!！?？]/.test(trimmed);
+
+    return (startsWithResponse || (noThinkingMarkers && isShortStatement && hasCompleteSentences));
+  }
+  private static isThinkingParagraph(paragraph: string): boolean {
+    const thinkingIndicators = [
+      /(?:let me|让我|我需要|我应该|我来)/i,
+      /(?:think|consider|analyze|思考|考虑|分析)/i,
+      /(?:first|second|then|next|首先|然后|接下来)/i,
+      /(?:what|how|why|什么|如何|为什么|怎么)/i,
+      /(?:step|阶段|步骤)/i,
+      /(?:hmm|嗯|好的|看起来)/i
+    ];
+
+    return thinkingIndicators.some(pattern => pattern.test(paragraph));
+  }
+
+  /**
+   * 判断段落是否是明确的回复内容
+   */
+  private static isDefinitiveResponse(paragraph: string): boolean {
+    const responseIndicators = [
+      /(?:I'll|我将|我会)/i,
+      /(?:Here's|这里是|以下是)/i,
+      /(?:To answer|回答|解答)/i,
+      /(?:The solution|解决方案|方案)/i,
+      /(?:In summary|总结|概括)/i,
+      /(?:My recommendation|我的建议|建议)/i,
+      /(?:Therefore|因此|所以)/i
+    ];
+
+    // 检查是否包含明确的回复指示词
+    const hasResponseIndicators = responseIndicators.some(pattern => pattern.test(paragraph));
+
+    // 检查是否以明确的陈述句开始（而不是思考过程）
+    const startsWithStatement = /^[A-Z][^?]*\.$/.test(paragraph.trim()) ||
+                               /^[一-龥][^？]*。$/.test(paragraph.trim());
+
+    return hasResponseIndicators || startsWithStatement;
+  }
+
+  /**
+   * 检查文本是否包含思考过程的模式
+   */
+  private static containsThinkingPatterns(text: string): boolean {
+    const thinkingPatterns = [
+      /(?:I'm|I am|我正在|我在)/i,
+      /(?:let me|让我|我需要|我应该)/i,
+      /(?:thinking|considering|analyzing|思考|考虑|分析)/i,
+      /(?:step|phase|stage|步骤|阶段|阶段)/i,
+      /(?:first|second|next|then|首先|然后|接下来)/i,
+      /(?:planning|策划|计划)/i,
+      /(?:approach|方法|策略)/i,
+      /(?:breaking down|分解|拆分)/i,
+      /(?:focusing|专注|关注)/i,
+      /(?:examining|检查|查看)/i,
+      /(?:evaluating|评估|评价)/i,
+      /(?:identifying|识别|确定)/i,
+      /(?:prioritizing|优先考虑)/i
+    ];
+
+    return thinkingPatterns.some(pattern => pattern.test(text));
+  }
+
+  /**
+   * 判断整个文本是否是完整的回复（不包含思考过程）
+   */
+  private static isCompleteResponse(text: string): boolean {
+    // 检查是否包含明确的回复开始标记
+    const responseStarters = [
+      /^(?:Here's|这里是|以下是)/i,
+      /^(?:To answer|回答)/i,
+      /^(?:The answer is|答案是)/i,
+      /^(?:Based on|基于)/i,
+      /^(?:After analyzing|分析后)/i,
+      /^(?:I'll|我将|我会)/i,
+      /^(?:Let me provide|让我提供)/i
+    ];
+
+    // 检查文本是否以回复标记开始
+    const startsWithResponse = responseStarters.some(pattern => pattern.test(text.trim()));
+
+    // 检查文本是否不包含思考过程指示词
+    const hasNoThinkingProcess = !this.containsThinkingPatterns(text);
+
+    // 检查是否是简短的陈述性回复
+    const isShortStatement = text.length < 150 && !text.includes('？') && !text.includes('?');
+
+    return startsWithResponse || (hasNoThinkingProcess && isShortStatement);
+  }
+  static validateThinkingConfig(config: ThinkingConfig | null): {
+    isValid: boolean;
+    errors: string[];
+    warnings: string[];
+  } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!config) {
+      return { isValid: true, errors, warnings }; // null配置是有效的
+    }
+
+    if (config.thinkingBudget !== undefined) {
+      if (typeof config.thinkingBudget !== 'number') {
+        errors.push('thinkingBudget must be a number');
+      } else {
+        if (config.thinkingBudget < 50 && config.thinkingBudget !== 0) {
+          warnings.push('thinkingBudget is very low, may not provide enough reasoning space');
+        }
+        if (config.thinkingBudget > this.maxBudget) {
+          warnings.push(`thinkingBudget exceeds recommended maximum (${this.maxBudget})`);
+        }
+      }
+    }
+
+    if (config.exposeThoughtsToClient !== undefined && typeof config.exposeThoughtsToClient !== 'boolean') {
+      errors.push('exposeThoughtsToClient must be a boolean');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings
     };
   }
 

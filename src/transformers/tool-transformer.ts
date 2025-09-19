@@ -33,9 +33,10 @@ export class ToolTransformer {
       };
     }
 
-    // Filter out official tool types that we don't yet support in Gemini conversion
-    const supportedTools = claudeTools.filter(tool => {
-      // Skip official Claude tools that don't have Gemini equivalents
+    // 转换所有工具，包括Claude官方工具
+    // 作为代理服务，不应该过滤工具，而是忠实转换
+    const convertedTools = claudeTools.map(tool => {
+      // 对于Claude官方工具，转换为适合的格式
       if (tool.type && [
         'bash_20250124',
         'code_execution_20250124',
@@ -43,16 +44,19 @@ export class ToolTransformer {
         'web_fetch_20250305',
         'computer_use_20250124'
       ].includes(tool.type)) {
-        // These tools need special handling or aren't supported yet
-        return false;
+        return {
+          name: tool.type,  // 使用type作为name
+          description: tool.description || `${tool.type} - Claude official tool`,
+          input_schema: tool.input_schema || { type: 'object', properties: {} }
+        };
       }
-      return true;
+      // 自定义工具保持原样
+      return tool;
     });
 
-    // 保留所有工具作为函数工具，包括WebSearch
-    // 这样客户端可以看到工具调用
-    if (supportedTools.length > 0) {
-      const functionDeclarations: GeminiFunctionDeclaration[] = supportedTools.map(tool => ({
+    // 将转换后的工具添加为函数声明
+    if (convertedTools.length > 0) {
+      const functionDeclarations: GeminiFunctionDeclaration[] = convertedTools.map(tool => ({
         name: tool.name,
         description: tool.description || `${tool.name} tool`,
         parameters: this.convertInputSchema(tool.input_schema || { type: 'object', properties: {} })

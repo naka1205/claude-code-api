@@ -106,8 +106,7 @@ export type ClaudeToolChoice =
 
 export interface ClaudeThinking {
   type: 'enabled' | 'disabled';
-  expose_to_client?: boolean;
-  budget?: number;
+  budget_tokens?: number;
 }
 
 export interface ClaudeRequest {
@@ -149,6 +148,15 @@ export interface ClaudeTextBlock {
 }
 
 /**
+ * Claude 思考内容块 - Extended Thinking支持
+ */
+export interface ClaudeThinkingBlock {
+  type: 'thinking';
+  thinking: string;
+  signature?: string; // 思考内容的签名验证
+}
+
+/**
  * Claude 工具结果响应
  */
 export interface ClaudeToolResult {
@@ -163,7 +171,7 @@ export interface ClaudeToolResult {
 /**
  * Claude 响应内容块
  */
-export type ClaudeContentBlock = ClaudeTextBlock | ClaudeToolUse | ClaudeToolResult;
+export type ClaudeContentBlock = ClaudeTextBlock | ClaudeThinkingBlock | ClaudeToolUse | ClaudeToolResult;
 
 /**
  * Claude 响应
@@ -208,6 +216,7 @@ export interface ClaudeStreamEvent {
   delta?: {
     type?: string;
     text?: string;
+    thinking?: string;  // 支持思考内容delta
     partial_json?: string;
     stop_reason?: string;
     stop_sequence?: string;

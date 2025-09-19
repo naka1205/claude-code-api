@@ -7,6 +7,7 @@ import {
   ClaudeResponse,
   ClaudeContentBlock,
   ClaudeTextBlock,
+  ClaudeThinkingBlock,
   ClaudeToolUse
 } from '../types/claude';
 import {
@@ -18,6 +19,7 @@ import {
 import { ContentTransformer } from './content-transformer';
 import { ToolTransformer } from './tool-transformer';
 import { ThinkingTransformer } from './thinking-transformer';
+import { Logger } from '../utils/logger';
 
 export interface ResponseTransformOptions {
   exposeThinkingToClient?: boolean;
@@ -57,6 +59,15 @@ export class ResponseTransformer {
       if (!candidate) {
         throw new Error('No response candidate available');
       }
+
+      // 记录关键信息：终止原因和token使用
+      Logger.info('ResponseTransformer', 'Response summary', {
+        finishReason: candidate.finishReason,
+        partsCount: candidate.content?.parts?.length || 0,
+        inputTokens: geminiResponse.usageMetadata?.promptTokenCount,
+        outputTokens: geminiResponse.usageMetadata?.candidatesTokenCount,
+        thinkingTokens: geminiResponse.usageMetadata?.thoughtsTokenCount
+      });
 
       // 转换内容块
       let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient);
@@ -113,43 +124,74 @@ export class ResponseTransformer {
     candidate: GeminiCandidate,
     exposeThinkingToClient: boolean = false
   ): Promise<ClaudeContentBlock[]> {
-    if (!candidate.content || !candidate.content.parts) {
+    Logger.debug('ResponseTransformer', 'Transforming content blocks');
+    Logger.debug('ResponseTransformer', `Candidate has parts: ${!!candidate.content?.parts}`);
+
+    // 检查是否有内容
+    if (!candidate.content) {
+      Logger.warn('ResponseTransformer', 'No candidate content');
       return [{ type: 'text', text: '' }];
     }
 
-    // 调试日志：查看Gemini返回的parts结构
-    console.log('[ResponseTransformer] Gemini response structure:', {
-      hasCandidate: !!candidate,
-      hasParts: !!candidate.content?.parts,
-      partsCount: candidate.content?.parts?.length || 0
-    });
+    // 如果没有parts但有其他thinking相关字段，尝试处理
+    if (!candidate.content.parts || candidate.content.parts.length === 0) {
+      Logger.warn('ResponseTransformer', 'No content parts found');
 
-    if (candidate.content?.parts) {
-      console.log('[ResponseTransformer] Gemini parts:', JSON.stringify(candidate.content.parts.map(p => {
-        const keys = Object.keys(p);
-        if ('thought' in p) return { type: 'thought', thought: p.thought };
-        if ('modelOutputThought' in p) return { type: 'modelOutputThought', content: p.modelOutputThought };
-        if ('text' in p) return { type: 'text', textLength: p.text?.length };
-        if ('functionCall' in p) return { type: 'functionCall', name: (p as any).functionCall?.name };
-        return { type: 'unknown', keys };
-      })));
+      // 检查是否在candidate级别有思考内容
+      if ((candidate as any).content?.text || (candidate as any).thinking) {
+        const thinkingText = (candidate as any).content?.text || (candidate as any).thinking;
+        if (thinkingText && exposeThinkingToClient) {
+          const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(thinkingText);
+          const blocks: ClaudeContentBlock[] = [];
+
+          if (thinking) {
+            blocks.push({
+              type: 'thinking',
+              thinking: thinking,
+              signature: ThinkingTransformer.generateThinkingSignature(thinking)
+            } as ClaudeThinkingBlock);
+          }
+
+          if (response) {
+            blocks.push({ type: 'text', text: response });
+          }
+
+          return blocks.length > 0 ? blocks : [{ type: 'text', text: thinkingText }];
+        }
+
+        return [{ type: 'text', text: thinkingText || '' }];
+      }
+
+      return [{ type: 'text', text: '' }];
     }
 
-    console.log('[ResponseTransformer] exposeThinkingToClient:', exposeThinkingToClient);
+    Logger.info('ResponseTransformer', `Parts count: ${candidate.content.parts.length}`);
+    Logger.debug('ResponseTransformer', 'Parts details',
+      candidate.content.parts.map((p: any) => ({
+        hasText: 'text' in p,
+        hasThought: p.thought,
+        hasFunctionCall: 'functionCall' in p,
+        hasFunctionResponse: 'functionResponse' in p,
+        textPreview: p.text?.substring(0, 50)
+      }))
+    );
 
     // 使用原有的ContentTransformer处理
-    return await ContentTransformer.processToolCallsAndResults(
+    const result = await ContentTransformer.processToolCallsAndResults(
       candidate.content.parts,
       exposeThinkingToClient
     );
+
+    Logger.info('ResponseTransformer', `Transformed blocks count: ${result.length}`);
+    return result;
   }
 
   /**
    * 转换单个部分
    */
-  private static transformPart(part: GeminiPart): ClaudeContentBlock | null {
-    // 文本部分
-    if ('text' in part) {
+  private static transformPart(part: GeminiPart, options?: ResponseTransformOptions): ClaudeContentBlock | null {
+    // 文本部分 - 排除带thought标记的内容
+    if ('text' in part && !('thought' in part)) {
       return {
         type: 'text',
         text: part.text
@@ -193,6 +235,32 @@ export class ResponseTransformer {
       } as any;
     }
 
+    // 思考内容部分 - 正确处理Gemini格式
+    if ('thought' in part && 'text' in part) {
+      const shouldExpose = options?.exposeThinkingToClient ?? false;
+
+      if (shouldExpose) {
+        // 按照Claude格式返回thinking block，内容从text字段获取
+        Logger.debug('ResponseTransformer', 'Creating thinking block from text field', {
+          thoughtFlag: (part as any).thought,
+          textLength: (part as any).text?.length || 0,
+          exposeToClient: shouldExpose
+        });
+
+        return {
+          type: 'thinking',
+          thinking: (part as any).text, // 思考内容在text字段中
+          signature: ThinkingTransformer.generateThinkingSignature((part as any).text)
+        } as ClaudeThinkingBlock;
+      } else {
+        // 不暴露思考内容时，过滤掉
+        Logger.debug('ResponseTransformer', 'Filtering out thinking content (not exposed to client)', {
+          textLength: (part as any).text?.length || 0
+        });
+        return null;
+      }
+    }
+
     return null;
   }
 
@@ -214,10 +282,10 @@ export class ResponseTransformer {
         break;
       case 'MAX_TOKENS':
         stopReason = 'max_tokens';
+        Logger.warn('ResponseTransformer', 'Response terminated: MAX_TOKENS reached');
         break;
       case 'STOP_SEQUENCE':
         stopReason = 'stop_sequence';
-        // Gemini不返回具体的停止序列
         stopSequence = null;
         break;
       case 'TOOL_CALLS':
@@ -225,6 +293,9 @@ export class ResponseTransformer {
         stopReason = 'tool_use';
         break;
       default:
+        if (finishReason) {
+          Logger.warn('ResponseTransformer', `Unknown finish reason: ${finishReason}`);
+        }
         stopReason = 'end_turn';
     }
 
@@ -247,14 +318,8 @@ export class ResponseTransformer {
       cache_read_input_tokens: metadata?.cachedContentTokenCount || 0
     };
 
-    // 添加thinking tokens计数（如果有）
-    if (includeThinkingTokens && metadata) {
-      // Gemini API可能在usageMetadata中返回thoughtsTokenCount
-      if ('thoughtsTokenCount' in metadata) {
-        usage.thoughts_output_tokens = (metadata as any).thoughtsTokenCount;
-      }
-
-      // 或者从响应中提取thinking内容
+    // 添加thinking tokens计数
+    if (includeThinkingTokens) {
       const thinkingData = ThinkingTransformer.extractThinkingFromResponse(geminiResponse);
       if (thinkingData?.thoughtsTokenCount) {
         usage.thoughts_output_tokens = thinkingData.thoughtsTokenCount;
@@ -264,7 +329,6 @@ export class ResponseTransformer {
     // 计算总计数
     if (metadata?.totalTokenCount !== undefined) {
       const calculated = usage.input_tokens + usage.output_tokens + (usage.thoughts_output_tokens || 0);
-      // 允许小误差
       if (Math.abs(calculated - metadata.totalTokenCount) < 10) {
         usage.total_tokens = metadata.totalTokenCount;
       }

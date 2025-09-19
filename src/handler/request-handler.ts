@@ -98,6 +98,17 @@ export class RequestHandler {
       await KeyUsageCache.reserve(selectedKey);
 
 
+      // 提取thinking配置
+      let exposeThinkingToClient = false;
+      if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
+        const thinkingConfig = ThinkingTransformer.transformThinking(
+          (claudeRequest as any).thinking,
+          this.getGeminiModel(claudeRequest.model),
+          claudeRequest
+        );
+        exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
+      }
+
       // 4. 转换请求
       const transformOptions = {
         enableSpecialToolHandling: false,
@@ -107,26 +118,6 @@ export class RequestHandler {
 
       const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
       const geminiRequest = transformResult.request;
-
-      // 提取thinking配置并确定是否向客户端展示
-      let exposeThinkingToClient = false;
-      if ((claudeRequest as any).thinking) {
-        // Claude API中thinking.expose_to_client字段控制是否向客户端展示思考内容
-        const thinking = (claudeRequest as any).thinking;
-        if (thinking.expose_to_client !== undefined) {
-          exposeThinkingToClient = thinking.expose_to_client;
-        } else if (thinking.type === 'enabled') {
-          // 如果thinking被启用但没有设置expose_to_client，默认为true
-          exposeThinkingToClient = true;
-        }
-        console.log('[RequestHandler] thinking config:', JSON.stringify(thinking));
-        console.log('[RequestHandler] exposeThinkingToClient:', exposeThinkingToClient);
-      } else if (transformResult.thinkingEnabled) {
-        // 如果没有thinking配置，但通过复杂度分析自动启用了thinking
-        exposeThinkingToClient = true;
-        console.log('[RequestHandler] Auto-enabled thinking detected from transform result');
-        console.log('[RequestHandler] Setting exposeThinkingToClient to true');
-      }
 
       // 添加调试日志
       

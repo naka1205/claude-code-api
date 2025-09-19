@@ -22,6 +22,7 @@ import { ModelMapper } from '../models';
 import { ContentTransformer } from './content-transformer';
 import { ToolTransformer } from './tool-transformer';
 import { ThinkingTransformer } from './thinking-transformer';
+import { Logger } from '../utils/logger';
 
 export interface TransformOptions {
   enableSpecialToolHandling?: boolean;
@@ -40,7 +41,6 @@ export interface ValidationWarning {
 export interface TransformResult {
   request: GeminiRequest;
   warnings: ValidationWarning[];
-  thinkingEnabled?: boolean;
 }
 
 export class RequestTransformer {
@@ -83,30 +83,31 @@ export class RequestTransformer {
       // 6. 转换生成配置
       const generationConfig = this.transformGenerationConfig(claudeRequest, transformOptions, warnings);
 
-      // 7. 处理 Extended Thinking（支持自动启用）
-      let thinkingEnabled = false;
-      if (transformOptions.enableThinking) {
-        // 不再要求必须显式设置thinking.type为enabled
-        // 现在会基于复杂度自动判断是否启用
+      // 7. 处理 Extended Thinking（仅当用户显式开启时）
+      if (transformOptions.enableThinking && claudeRequest.thinking) {
+        Logger.info('RequestTransformer', 'Processing thinking configuration', {
+          thinking: claudeRequest.thinking,
+          geminiModel
+        });
+
         const thinkingConfig = ThinkingTransformer.transformThinking(
           claudeRequest.thinking,
           geminiModel,
           claudeRequest
         );
-        if (thinkingConfig && modelMapper.getModelCapabilities(geminiModel).supportsThinking) {
-          generationConfig.thinkingConfig = {
-            thinkingBudget: thinkingConfig.thinkingBudget,
-            includeThoughts: thinkingConfig.includeThoughts || true  // 请求返回思考内容
-          };
-          thinkingEnabled = thinkingConfig.thinkingBudget !== undefined && thinkingConfig.thinkingBudget > 0;
 
-          // 输出调试信息
-          console.log('[RequestTransformer] Thinking config applied:', generationConfig.thinkingConfig);
-          console.log('[RequestTransformer] Thinking enabled:', thinkingEnabled);
-        } else if (thinkingConfig && !modelMapper.getModelCapabilities(geminiModel).supportsThinking) {
-          console.log(`[RequestTransformer] Model ${geminiModel} does not support thinking - skipping thinking config`);
-        } else if (!thinkingConfig) {
-          console.log('[RequestTransformer] No thinking config generated - thinking disabled');
+        Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);
+
+        if (thinkingConfig) {
+          (generationConfig as any).thinkingConfig = {
+            thinkingBudget: thinkingConfig.thinkingBudget,
+            includeThoughts: thinkingConfig.includeThoughts
+          };
+
+          Logger.info('RequestTransformer', 'Applied thinking config to generation', {
+            thinkingBudget: thinkingConfig.thinkingBudget,
+            includeThoughts: thinkingConfig.includeThoughts
+          });
         }
       }
 
@@ -146,7 +147,7 @@ export class RequestTransformer {
         this.handleSpecialTools(geminiRequest);
       }
 
-      return { request: geminiRequest, warnings, thinkingEnabled };
+      return { request: geminiRequest, warnings };
     } catch (error) {
       throw new Error(`Request transformation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
