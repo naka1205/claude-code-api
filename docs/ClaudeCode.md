@@ -321,6 +321,82 @@ curl https://api.anthropic.com/v1/messages \
 
 ---
 
+## Todo工具系列详细说明
+
+### TodoWrite工具参数结构
+
+Claude Code提供了TodoWrite工具来帮助管理和跟踪任务进度，该工具的参数结构如下：
+
+#### 基本参数
+- `todos` (array, 必需): 待办任务列表数组
+
+#### 每个todo项目的结构
+- `content` (string, 必需): 任务描述，使用祈使句形式 (如 "Run tests", "Fix authentication bug")
+- `activeForm` (string, 必需): 任务进行时的描述形式 (如 "Running tests", "Fixing authentication bug")
+- `status` (string, 必需): 任务状态，可选值：
+  - `pending`: 待处理
+  - `in_progress`: 进行中
+  - `completed`: 已完成
+
+#### 状态管理原则
+
+1. **同时只能有一个任务处于`in_progress`状态**
+2. **任务完成后立即标记为`completed`，不要批量更新**
+3. **实时更新任务状态，保持用户对进度的可见性**
+
+#### 使用示例
+
+```json
+{
+  "todos": [
+    {
+      "content": "Analyze project structure",
+      "activeForm": "Analyzing project structure",
+      "status": "completed"
+    },
+    {
+      "content": "Optimize data transformation logic",
+      "activeForm": "Optimizing data transformation logic",
+      "status": "in_progress"
+    },
+    {
+      "content": "Implement caching strategy",
+      "activeForm": "Implementing caching strategy",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+#### 客户端显示格式
+
+Todo任务在Claude Code客户端中以以下格式显示：
+
+```
+Todos
+☒ Analyze project structure
+⚫ Optimizing data transformation logic
+☐ Implement caching strategy
+```
+
+- `☒` 表示已完成的任务 (completed)
+- `⚫` 表示正在进行的任务 (in_progress)
+- `☐` 表示待处理的任务 (pending)
+
+#### 已知限制
+
+1. **Task工具内部的TodoWrite更新不可见**: 当在Task工具内部调用TodoWrite时，用户看不到Todo更新，只能看到最终输出
+2. **覆盖整个列表**: TodoWrite会覆盖整个Todo列表而不是更新单个项目，可能导致现有todos丢失
+
+#### 最佳实践
+
+1. **频繁使用**: 在复杂任务中积极使用TodoWrite来跟踪进度
+2. **即时更新**: 完成任务后立即更新状态，不要延迟
+3. **清晰描述**: 使用具体、可操作的任务描述
+4. **单一进行**: 确保同时只有一个任务为in_progress状态
+
+---
+
 ## 客户端工具调用原理与流程（Claude Code）
 
 以下描述从“用户发起请求”到“工具执行与结果回传”端到端的关键步骤：

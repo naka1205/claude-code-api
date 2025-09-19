@@ -473,7 +473,15 @@ export class StreamTransformer {
                       }
                     }
 
-                    
+                    // TodoWrite 工具不需要特殊处理 - Claude Code 客户端会自行处理显示
+                    // 只需要正常传递 tool_use 内容块即可
+                    if (functionCall.name === 'TodoWrite') {
+                      console.log(`[StreamDebug] TodoWrite tool detected, todos:`, args.todos?.map((t: any) => ({
+                        status: t.status,
+                        content: t.content,
+                        activeForm: t.activeForm
+                      })));
+                    }
 
                     // 先结束当前文本块（如果有）
                     if (currentBlockIndex === 0 && currentTextContent) {
@@ -493,7 +501,7 @@ export class StreamTransformer {
                       input: args
                     };
 
-                    
+
 
                     // 发送工具使用开始事件
                     const toolBlockStart: ClaudeStreamEvent = {
@@ -503,6 +511,7 @@ export class StreamTransformer {
                     };
                     controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(toolBlockStart)}\n\n`));
 
+                    // 对于 TodoWrite 工具，我们需要确保参数被正确传递
                     // 发送工具参数增量事件 - 这是关键！Claude CLI需要这个来获取参数
                     const inputDelta: ClaudeStreamEvent = {
                       type: 'content_block_delta',
