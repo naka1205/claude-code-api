@@ -127,28 +127,6 @@ export function getModelCapabilities(geminiModel: string): ModelCapability {
 }
 
 /**
- * 检查模型是否支持特定功能
- */
-export function checkModelSupport(geminiModel: string, feature: keyof ModelCapability): boolean {
-  const capabilities = getModelCapabilities(geminiModel);
-  return capabilities[feature] === true || false;
-}
-
-/**
- * 获取支持的Claude模型列表
- */
-export function getSupportedClaudeModels(): string[] {
-  return Object.keys(MODEL_MAPPING);
-}
-
-/**
- * 获取支持的Gemini模型列表
- */
-export function getSupportedGeminiModels(): string[] {
-  return Object.keys(GEMINI_MODEL_CAPABILITIES);
-}
-
-/**
  * 验证Claude模型是否受支持
  */
 export function isClaudeModelSupported(model: string): boolean {
@@ -175,10 +153,6 @@ export class ModelMapper {
 
   getModelCapabilities(geminiModel: string): ModelCapability {
     return getModelCapabilities(geminiModel);
-  }
-
-  checkModelSupport(geminiModel: string, feature: keyof ModelCapability): boolean {
-    return checkModelSupport(geminiModel, feature);
   }
 
   getRecommendedMaxTokens(geminiModel: string): number {

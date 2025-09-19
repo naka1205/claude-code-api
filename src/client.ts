@@ -160,27 +160,6 @@ export class GeminiApiClient {
     }
   }
 
-  /**
-   * 获取当前API密钥数量
-   */
-  getApiKeyCount(): number {
-    return this.apiKeys.length;
-  }
-
-  /**
-   * 获取配置信息
-   */
-  getConfig(): {
-    keyCount: number;
-    baseUrl: string;
-    timeout: number;
-  } {
-    return {
-      keyCount: this.apiKeys.length,
-      baseUrl: this.baseUrl,
-      timeout: this.timeout
-    };
-  }
 }
 
 /**

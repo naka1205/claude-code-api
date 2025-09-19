@@ -49,14 +49,4 @@ export class ApiKeyManager {
     // 这里只做基本长度检查
     return key.length >= API_KEY.MIN_LENGTH;
   }
-
-  /**
-   * 掩码API密钥用于日志
-   */
-  maskApiKey(key: string): string {
-    if (key.length <= 8) {
-      return '***';
-    }
-    return `${key.substring(0, 8)}***`;
-  }
 }

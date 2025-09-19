@@ -99,23 +99,6 @@ export class KeyUsageCache {
     this.memoryCache.set(key, usage);
   }
 
-  /**
-   * 记录密钥成功使用
-   */
-  static async onSuccess(key: string): Promise<void> {
-    const usage = this.getKeyUsageFromMemory(key);
-    // 成功使用时重置错误计数
-    if (usage.errorCount > 0) {
-      usage.errorCount = Math.max(0, usage.errorCount - 1);
-    }
-    delete usage.lastError;
-    delete usage.lastErrorCode;
-    this.memoryCache.set(key, usage);
-  }
-
-  /**
-   * 获取密钥使用情况（从内存）
-   */
   private static getKeyUsageFromMemory(key: string): KeyUsageInfo {
     const cached = this.memoryCache.get(key);
 
@@ -134,33 +117,4 @@ export class KeyUsageCache {
     return newUsage;
   }
 
-  /**
-   * 清理过期的缓存数据
-   */
-  static async cleanup(): Promise<void> {
-    const now = Date.now();
-    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
-
-    // 清理超过30天未使用的记录
-    for (const [key, usage] of this.memoryCache.entries()) {
-      if (usage.lastUsed && (now - usage.lastUsed) > thirtyDaysInMs) {
-        this.memoryCache.delete(key);
-      }
-    }
-  }
-
-  /**
-   * 获取所有密钥的统计信息
-   */
-  static async getStats(
-    apiKeys: string[]
-  ): Promise<Record<string, KeyUsageInfo>> {
-    const stats: Record<string, KeyUsageInfo> = {};
-
-    for (const key of apiKeys) {
-      stats[key] = this.getKeyUsageFromMemory(key);
-    }
-
-    return stats;
-  }
 }

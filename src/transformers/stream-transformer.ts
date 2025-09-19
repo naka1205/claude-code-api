@@ -552,8 +552,20 @@ export class StreamTransformer {
                   controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
                 }
 
-                // 更新token统计
+                // 更新token统计 - 包含思维令牌和缓存令牌信息
                 totalOutputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || currentTextContent.length / 4; // 估算
+                const thinkingTokens = geminiChunk.usageMetadata?.thoughtsTokenCount;
+                const cachedTokens = geminiChunk.usageMetadata?.cachedContentTokenCount;
+
+                // 记录完整的令牌使用情况（仅在调试模式下）
+                if (thinkingTokens || cachedTokens) {
+                  console.debug('Stream token details:', {
+                    output: totalOutputTokens,
+                    thinking: thinkingTokens,
+                    cached: cachedTokens,
+                    total: geminiChunk.usageMetadata?.totalTokenCount
+                  });
+                }
 
                 // 发送message_delta
                 const stopInfo = transformStopReason(geminiChunk.candidates[0].finishReason);

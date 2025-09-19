@@ -189,12 +189,19 @@ export interface GeminiPromptFeedback {
 
 /**
  * Gemini 使用元数据
+ * 包含请求的令牌使用情况统计
  */
 export interface GeminiUsageMetadata {
+  /** 输入提示词的令牌数量 */
   promptTokenCount?: number;
+  /** 生成候选响应的令牌数量 */
   candidatesTokenCount?: number;
+  /** 总令牌数量 (prompt + candidates + thoughts) */
   totalTokenCount?: number;
+  /** 从缓存中检索的内容令牌数量 */
   cachedContentTokenCount?: number;
+  /** 思维推理过程的令牌数量 (2025年新增，仅支持Gemini 2.5系列) */
+  thoughtsTokenCount?: number;
 }
 
 /**

@@ -66,7 +66,9 @@ export class ResponseTransformer {
         partsCount: candidate.content?.parts?.length || 0,
         inputTokens: geminiResponse.usageMetadata?.promptTokenCount,
         outputTokens: geminiResponse.usageMetadata?.candidatesTokenCount,
-        thinkingTokens: geminiResponse.usageMetadata?.thoughtsTokenCount
+        thinkingTokens: geminiResponse.usageMetadata?.thoughtsTokenCount, // 思维推理令牌 (Gemini 2.5+)
+        cachedTokens: geminiResponse.usageMetadata?.cachedContentTokenCount, // 缓存内容令牌
+        totalTokens: geminiResponse.usageMetadata?.totalTokenCount
       });
 
       // 转换内容块
@@ -318,11 +320,17 @@ export class ResponseTransformer {
       cache_read_input_tokens: metadata?.cachedContentTokenCount || 0
     };
 
-    // 添加thinking tokens计数
+    // 添加thinking tokens计数 - 优先使用usageMetadata中的值
     if (includeThinkingTokens) {
-      const thinkingData = ThinkingTransformer.extractThinkingFromResponse(geminiResponse);
-      if (thinkingData?.thoughtsTokenCount) {
-        usage.thoughts_output_tokens = thinkingData.thoughtsTokenCount;
+      if (metadata?.thoughtsTokenCount) {
+        // 直接使用Gemini API返回的思维令牌计数
+        usage.thoughts_output_tokens = metadata.thoughtsTokenCount;
+      } else {
+        // 后备方案：从响应内容中提取
+        const thinkingData = ThinkingTransformer.extractThinkingFromResponse(geminiResponse);
+        if (thinkingData?.thoughtsTokenCount) {
+          usage.thoughts_output_tokens = thinkingData.thoughtsTokenCount;
+        }
       }
     }
 
