@@ -100,27 +100,70 @@ export class RequestHandler {
 
       // 提取thinking配置
       let exposeThinkingToClient = false;
+
+      console.log(`[ThinkingDebug] Client thinking request:`, {
+        requestId: finalRequestId,
+        hasThinkingConfig: !!(claudeRequest as any).thinking,
+        thinkingType: (claudeRequest as any).thinking?.type,
+        claudeModel: claudeRequest.model,
+        geminiModel,
+        isGemini25Pro: geminiModel === 'gemini-2.5-pro'
+      });
+
       if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
         const thinkingConfig = ThinkingTransformer.transformThinking(
           (claudeRequest as any).thinking,
-          this.getGeminiModel(claudeRequest.model),
+          geminiModel,
           claudeRequest
         );
         exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
+
+        console.log(`[ThinkingDebug] Client enabled thinking - config generated:`, {
+          requestId: finalRequestId,
+          thinkingConfig,
+          exposeThinkingToClient,
+          modelSupportsThinking: ThinkingTransformer.modelSupportsThinking(geminiModel)
+        });
+      } else {
+        // 客户端未启用thinking，但检查Gemini 2.5系列模型
+        console.log(`[ThinkingDebug] Client did NOT enable thinking:`, {
+          requestId: finalRequestId,
+          claudeModel: claudeRequest.model,
+          geminiModel,
+          isGemini25Series: geminiModel.startsWith('gemini-2.5'),
+          willForceThinking: geminiModel === 'gemini-2.5-pro' // Pro不能禁用
+        });
+
+        if (geminiModel === 'gemini-2.5-pro') {
+          console.log(`[ThinkingDebug] CRITICAL: Gemini 2.5 Pro cannot disable thinking, but client did not enable thinking exposure`);
+        }
       }
 
       // 4. 转换请求
       const transformOptions = {
         enableSpecialToolHandling: false,
         maxOutputTokens: claudeRequest.max_tokens,
-        safeOutputTokenLimiting: true
+        safeOutputTokenLimiting: true,
+        enableThinking: true  // 总是启用thinking处理，让模型决定是否使用
       };
 
       const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
       const geminiRequest = transformResult.request;
 
-      // 添加调试日志
-      
+      // 添加thinking相关的调试日志
+      console.log(`[ThinkingDebug] Request transformation completed:`, {
+        requestId: finalRequestId,
+        geminiModel,
+        hasGenerationConfig: !!geminiRequest.generationConfig,
+        thinkingBudget: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget,
+        exposeThinkingToClient,
+        geminiRequestStructure: {
+          systemInstruction: !!geminiRequest.systemInstruction,
+          contents: geminiRequest.contents?.length || 0,
+          tools: geminiRequest.tools?.length || 0,
+          generationConfig: Object.keys(geminiRequest.generationConfig || {})
+        }
+      });
 
       // 记录警告信息
       if (transformResult.warnings && transformResult.warnings.length > 0) {

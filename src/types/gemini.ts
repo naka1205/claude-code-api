@@ -76,6 +76,10 @@ export interface GeminiGenerationConfig {
   frequencyPenalty?: number;
   responseMimeType?: string;
   responseSchema?: any;
+  thinkingConfig?: {
+    thinkingBudget?: number;
+    includeThoughts?: boolean;
+  };
 }
 
 /**

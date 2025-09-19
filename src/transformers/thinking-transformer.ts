@@ -129,19 +129,39 @@ export class ThinkingTransformer {
     const complexity = this.analyzeComplexity(claudeRequest);
     let budget = limits.default;
 
+    console.log(`[ThinkingDebug] Auto-thinking analysis for model ${geminiModel}:`, {
+      complexity: complexity.score,
+      recommendation: complexity.recommendation,
+      defaultBudget: limits.default,
+      canDisable: limits.canDisable,
+      requiresReasoning: complexity.factors.requiresReasoning
+    });
+
     if (budget === -1) {
       // 动态预算，基于复杂度计算
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
+      console.log(`[ThinkingDebug] Dynamic budget calculated: ${budget}`);
     } else if (budget === 0 && complexity.recommendation === 'enable') {
       // 默认关闭但建议开启的情况
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
+      console.log(`[ThinkingDebug] Auto-enabled thinking due to complexity: ${budget}`);
     }
+
+    // 关键：对于Gemini 2.5 Pro，即使自动启用thinking，也不应该暴露给客户端
+    const shouldExposeToClient = false; // 只有显式启用才暴露
+
+    console.log(`[ThinkingDebug] Final auto-thinking config:`, {
+      thinkingBudget: budget,
+      includeThoughts: budget > 0,
+      exposeToClient: shouldExposeToClient,
+      reason: 'Auto-mode: never expose thinking to client unless explicitly enabled'
+    });
 
     return {
       thinkingBudget: budget,
       includeThoughts: budget > 0,
-      exposeThoughtsToClient: budget > 0,  // 根据是否启用thinking决定
-      exposeToClient: budget > 0  // 兼容性字段
+      exposeThoughtsToClient: shouldExposeToClient,  // 自动模式下不暴露
+      exposeToClient: shouldExposeToClient  // 兼容性字段
     };
   }
 

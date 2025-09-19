@@ -83,11 +83,17 @@ export class RequestTransformer {
       // 6. 转换生成配置
       const generationConfig = this.transformGenerationConfig(claudeRequest, transformOptions, warnings);
 
-      // 7. 处理 Extended Thinking（仅当用户显式开启时）
-      if (transformOptions.enableThinking && claudeRequest.thinking) {
+      // 7. 处理 Extended Thinking（为所有情况处理thinking配置）
+      const shouldProcessThinking = transformOptions.enableThinking ||
+                                   claudeRequest.thinking ||
+                                   ThinkingTransformer.modelSupportsThinking(geminiModel);
+
+      if (shouldProcessThinking) {
         Logger.info('RequestTransformer', 'Processing thinking configuration', {
           thinking: claudeRequest.thinking,
-          geminiModel
+          geminiModel,
+          enableThinking: transformOptions.enableThinking,
+          modelSupports: ThinkingTransformer.modelSupportsThinking(geminiModel)
         });
 
         const thinkingConfig = ThinkingTransformer.transformThinking(

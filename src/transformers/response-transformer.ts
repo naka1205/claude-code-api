@@ -178,13 +178,32 @@ export class ResponseTransformer {
       }))
     );
 
-    // 使用原有的ContentTransformer处理
+    // 使用ContentTransformer处理，它会正确处理thinking/非thinking parts的分离
     const result = await ContentTransformer.processToolCallsAndResults(
       candidate.content.parts,
       exposeThinkingToClient
     );
 
     Logger.info('ResponseTransformer', `Transformed blocks count: ${result.length}`);
+
+    // 关键优化：如果结果为空或只包含空文本，提供fallback
+    if (result.length === 0 || (result.length === 1 && result[0].type === 'text' && !(result[0] as any).text?.trim())) {
+      Logger.warn('ResponseTransformer', 'Empty result after transformation, checking for thinking content fallback');
+
+      // 检查原始parts中是否有thinking内容但客户端未启用
+      const hasThinkingParts = candidate.content.parts.some((p: any) => 'thought' in p && p.thought);
+      const hasRegularParts = candidate.content.parts.some((p: any) => 'text' in p && !('thought' in p));
+
+      if (hasThinkingParts && !hasRegularParts && !exposeThinkingToClient) {
+        Logger.warn('ResponseTransformer', 'Detected thinking-only response but client did not enable thinking exposure');
+        // 提供一个友好的fallback消息
+        return [{
+          type: 'text',
+          text: '我已经完成了分析，但由于当前配置，无法显示详细的推理过程。如需查看完整的分析思路，请启用thinking模式。'
+        }];
+      }
+    }
+
     return result;
   }
 
@@ -241,6 +260,13 @@ export class ResponseTransformer {
     if ('thought' in part && 'text' in part) {
       const shouldExpose = options?.exposeThinkingToClient ?? false;
 
+      Logger.info('ResponseTransformer', 'Processing thinking content part', {
+        thoughtFlag: (part as any).thought,
+        textLength: (part as any).text?.length || 0,
+        shouldExpose,
+        clientRequestedThinking: shouldExpose
+      });
+
       if (shouldExpose) {
         // 按照Claude格式返回thinking block，内容从text字段获取
         Logger.debug('ResponseTransformer', 'Creating thinking block from text field', {
@@ -256,8 +282,11 @@ export class ResponseTransformer {
         } as ClaudeThinkingBlock;
       } else {
         // 不暴露思考内容时，过滤掉
-        Logger.debug('ResponseTransformer', 'Filtering out thinking content (not exposed to client)', {
-          textLength: (part as any).text?.length || 0
+        Logger.warn('ResponseTransformer', 'FILTERING OUT thinking content - client did not enable thinking exposure', {
+          textLength: (part as any).text?.length || 0,
+          thoughtContent: (part as any).text?.substring(0, 100) + '...', // 前100字符用于调试
+          shouldExpose,
+          reason: 'Client did not enable thinking mode'
         });
         return null;
       }
