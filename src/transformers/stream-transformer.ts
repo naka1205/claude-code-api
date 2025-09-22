@@ -346,24 +346,24 @@ export class StreamTransformer {
                     // thoughtSignature字段的存在不影响这是正常的对话内容
                     console.log(`[StreamDebug] Processing normal text content: ${part.text.length} chars, hasThoughtSignature: ${'thoughtSignature' in part}`);
 
-                    // 检测 isNewTopic 元数据并特殊处理
-                    // 这些是 Claude CLI 的内部控制信息，不应该作为对话内容
+                    // 检测 isNewTopic 元数据
+                    // 这是 Claude CLI 的会话管理信息，应该保留并传递给客户端
                     if (part.text.includes('isNewTopic') && part.text.includes('title')) {
                       try {
                         // 尝试解析，去除可能的 markdown 代码块标记
-                        const cleanedText = part.text.replace(/^```json\s*|```$/gm, '').trim();
+                        const cleanedText = part.text.replace(/^```json\s*|\s*```$/gm, '').trim();
                         const parsed = JSON.parse(cleanedText);
 
                         if ('isNewTopic' in parsed && typeof parsed.isNewTopic === 'boolean') {
-                          console.warn(`[StreamDebug] Detected Claude CLI metadata in response (isNewTopic: ${parsed.isNewTopic}, title: ${parsed.title})`);
-                          console.warn(`[StreamDebug] This metadata should not be in AI response. Skipping and waiting for actual content.`);
+                          console.log(`[StreamDebug] Detected Claude CLI metadata (isNewTopic: ${parsed.isNewTopic}, title: ${parsed.title})`);
+                          console.log(`[StreamDebug] Passing metadata to client as part of response.`);
 
-                          // 记录但不发送给客户端
-                          // 这种情况通常表示 Gemini 误解了请求，后续应该会有实际内容
-                          continue;
+                          // 继续处理，让这个内容作为响应的一部分发送给客户端
+                          // Claude CLI 会解析这个 JSON 来管理会话
                         }
                       } catch (e) {
-                        // 不是 JSON 格式，可能只是包含这些词的正常文本
+                        // 不是有效的 JSON，可能只是包含这些词的正常文本
+                        console.log(`[StreamDebug] Text contains 'isNewTopic' but is not valid JSON, treating as normal text`);
                       }
                     }
 
