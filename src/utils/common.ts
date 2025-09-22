@@ -31,6 +31,28 @@ export function maskApiKey(apiKey: string): string {
 }
 
 /**
+ * Mask sensitive data in objects for logging
+ */
+export function maskSensitiveData(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return obj;
+  }
+
+  const sensitiveKeys = ['key', 'apikey', 'api_key', 'password', 'token', 'secret', 'authorization'];
+  const masked = { ...obj };
+
+  for (const key in masked) {
+    if (sensitiveKeys.some(sensitive => key.toLowerCase().includes(sensitive))) {
+      if (typeof masked[key] === 'string') {
+        masked[key] = maskApiKey(masked[key]);
+      }
+    }
+  }
+
+  return masked;
+}
+
+/**
  * Get error type based on HTTP status code
  */
 export function getErrorTypeFromStatus(statusCode: number): string {
@@ -53,4 +75,80 @@ export function getErrorTypeFromStatus(statusCode: number): string {
     default:
       return 'api_error';
   }
+}
+
+/**
+ * Enhanced error context for better debugging
+ */
+export interface ErrorContext {
+  requestId?: string;
+  timestamp: string;
+  component: string;
+  operation: string;
+  statusCode?: number;
+  originalError?: any;
+  stack?: string;
+  additionalData?: Record<string, any>;
+}
+
+/**
+ * Create standardized error context
+ */
+export function createErrorContext(
+  component: string,
+  operation: string,
+  error: any,
+  additionalData?: Record<string, any>
+): ErrorContext {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  return {
+    timestamp: new Date().toISOString(),
+    component,
+    operation,
+    originalError: {
+      message: errorMessage,
+      name: error instanceof Error ? error.name : 'UnknownError',
+      ...error
+    },
+    stack: errorStack,
+    additionalData
+  };
+}
+
+/**
+ * Format error for logging with enhanced details
+ */
+export function formatErrorForLogging(
+  error: any,
+  context: Partial<ErrorContext>
+): string {
+  const errorContext = {
+    timestamp: new Date().toISOString(),
+    ...context
+  };
+
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  let formattedError = `[${errorContext.component}] ${errorContext.operation} failed: ${errorMessage}`;
+
+  if (errorContext.statusCode) {
+    formattedError += ` (Status: ${errorContext.statusCode})`;
+  }
+
+  if (errorContext.requestId) {
+    formattedError += ` (RequestID: ${errorContext.requestId})`;
+  }
+
+  if (errorStack) {
+    formattedError += `\nStack trace: ${errorStack}`;
+  }
+
+  if (errorContext.additionalData) {
+    formattedError += `\nAdditional data: ${JSON.stringify(errorContext.additionalData, null, 2)}`;
+  }
+
+  return formattedError;
 }

@@ -8,7 +8,7 @@ import { ResponseTransformer } from '../transformers/response-transformer';
 import { ClaudeResponse } from '../types/claude';
 import { createErrorResponse as createError, createSuccessResponse } from '../utils/response';
 import { createResponseHeaders } from '../utils/cors';
-import { getErrorTypeFromStatus } from '../utils/common';
+import { getErrorTypeFromStatus, createErrorContext } from '../utils/common';
 
 export class ResponseManager {
   /**
@@ -45,9 +45,26 @@ export class ResponseManager {
       });
 
     } catch (error) {
+      // 记录响应转换错误的详细信息
+      const errorContext = createErrorContext(
+        'ResponseManager',
+        'handleGeminiResponse',
+        error,
+        {
+          claudeModel,
+          exposeThinkingToClient,
+          responseStatus: response.statusCode,
+          hasResponseBody: !!response.body,
+          responseBodyType: response.body ? typeof response.body : 'undefined',
+          responseHeaders: Object.keys(response.headers || {})
+        }
+      );
+
+      console.error('[ResponseManager] Response handling error:', errorContext);
+
       return this.createErrorResponse(
         500,
-        error instanceof Error ? error.message : 'Failed to process response'
+        errorContext.originalError.message
       );
     }
   }
@@ -58,6 +75,25 @@ export class ResponseManager {
   private handleGeminiError(response: ApiResponse): Response {
     const body = response.body || {};
     const statusCode = response.statusCode;
+
+    // 记录原始Gemini错误详情
+    const errorContext = {
+      component: 'ResponseManager',
+      operation: 'handleGeminiError',
+      statusCode,
+      originalError: body,
+      timestamp: new Date().toISOString(),
+      errorAnalysis: {
+        hasErrorObject: !!body?.error,
+        errorCode: body?.error?.code,
+        errorStatus: body?.error?.status,
+        errorMessage: body?.error?.message,
+        hasDetails: !!(body?.error?.details && Array.isArray(body?.error?.details)),
+        detailsCount: body?.error?.details?.length || 0
+      }
+    };
+
+    console.error('[ResponseManager] Gemini API error:', errorContext);
 
     // 提取详细错误信息
     let errorMessage = this.extractErrorMessage(body);
@@ -80,16 +116,30 @@ export class ResponseManager {
       } else if (geminiError.status === 'UNAVAILABLE' || statusCode === 503) {
         errorType = 'overloaded_error';
         errorMessage = 'The model is currently overloaded. Please try again in a moment.';
+      } else if (geminiError.code === 'FAILED_PRECONDITION' &&
+                 geminiError.message?.toLowerCase().includes('conversation')) {
+        // 处理包含 isNewTopic 或其他对话终止相关的错误
+        errorType = 'invalid_request_error';
+        errorMessage = 'Conversation was terminated. Please start a new conversation.';
+        console.info('[ResponseManager] Conversation terminated, possibly due to isNewTopic or safety filters');
       }
 
       // 添加更多详细信息
       if (geminiError.details && Array.isArray(geminiError.details)) {
-        const details = geminiError.details.map((d: any) =>
-          typeof d === 'string' ? d : JSON.stringify(d)
-        ).join('; ');
+        const details = geminiError.details.map((d: any, index: number) => {
+          const detailStr = typeof d === 'string' ? d : JSON.stringify(d);
+          console.log(`[ResponseManager] Error detail ${index + 1}:`, d);
+          return detailStr;
+        }).join('; ');
+
         if (details) {
           errorMessage += ` Details: ${details}`;
         }
+      }
+
+      // 添加调试信息到错误消息
+      if (geminiError.code && geminiError.status) {
+        errorMessage += ` (Code: ${geminiError.code}, Status: ${geminiError.status})`;
       }
     }
 

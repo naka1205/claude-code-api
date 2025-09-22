@@ -219,20 +219,29 @@ export class StreamTransformer {
     // 转换停止原因的辅助函数
     const transformStopReason = (finishReason: string): {
       stop_reason: string;
-      stop_sequence: string | null;
+      stop_sequence?: string;
     } => {
       switch (finishReason?.toUpperCase()) {
         case 'STOP':
-          return { stop_reason: 'end_turn', stop_sequence: null };
+          return { stop_reason: 'end_turn' };
         case 'MAX_TOKENS':
-          return { stop_reason: 'max_tokens', stop_sequence: null };
+          return { stop_reason: 'max_tokens' };
         case 'STOP_SEQUENCE':
-          return { stop_reason: 'stop_sequence', stop_sequence: null };
+          return { stop_reason: 'stop_sequence' };
         case 'TOOL_CALLS':
         case 'FUNCTION_CALL':
-          return { stop_reason: 'tool_use', stop_sequence: null };
+          return { stop_reason: 'tool_use' };
+        case 'SAFETY':
+        case 'RECITATION':
+          // 处理安全过滤和内容重复等情况
+          console.warn(`[StreamTransformer] Response terminated due to safety/recitation: ${finishReason}`);
+          return { stop_reason: 'end_turn' };
+        case 'OTHER':
+          // Gemini 的 OTHER 状态，可能包含 isNewTopic 等特殊终止原因
+          console.info(`[StreamTransformer] Response terminated with OTHER reason (may include isNewTopic): ${finishReason}`);
+          return { stop_reason: 'end_turn' };
         default:
-          return { stop_reason: 'end_turn', stop_sequence: null };
+          return { stop_reason: 'end_turn' };
       }
     };
 
@@ -262,8 +271,8 @@ export class StreamTransformer {
               data = line.slice(6).trim();
             } else if (line.startsWith('data:')) {
               data = line.slice(5).trim();
-            } else if (line.includes('{')) {
-              // 某些情况下可能直接返回JSON
+            } else if (line.startsWith('{') && line.endsWith('}')) {
+              // 只有当行以 { 开始并以 } 结束时才尝试解析为 JSON
               data = line.trim();
             } else {
               continue;
@@ -337,6 +346,27 @@ export class StreamTransformer {
                     // thoughtSignature字段的存在不影响这是正常的对话内容
                     console.log(`[StreamDebug] Processing normal text content: ${part.text.length} chars, hasThoughtSignature: ${'thoughtSignature' in part}`);
 
+                    // 检测 isNewTopic 元数据并特殊处理
+                    // 这些是 Claude CLI 的内部控制信息，不应该作为对话内容
+                    if (part.text.includes('isNewTopic') && part.text.includes('title')) {
+                      try {
+                        // 尝试解析，去除可能的 markdown 代码块标记
+                        const cleanedText = part.text.replace(/^```json\s*|```$/gm, '').trim();
+                        const parsed = JSON.parse(cleanedText);
+
+                        if ('isNewTopic' in parsed && typeof parsed.isNewTopic === 'boolean') {
+                          console.warn(`[StreamDebug] Detected Claude CLI metadata in response (isNewTopic: ${parsed.isNewTopic}, title: ${parsed.title})`);
+                          console.warn(`[StreamDebug] This metadata should not be in AI response. Skipping and waiting for actual content.`);
+
+                          // 记录但不发送给客户端
+                          // 这种情况通常表示 Gemini 误解了请求，后续应该会有实际内容
+                          continue;
+                        }
+                      } catch (e) {
+                        // 不是 JSON 格式，可能只是包含这些词的正常文本
+                      }
+                    }
+
                     // 使用状态管理器进行增量检测 - 恢复自Node.js版本
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (!incrementalText) {
@@ -359,81 +389,102 @@ export class StreamTransformer {
                     // 正确处理Gemini思考格式 - thought是标记，思考内容在text字段中
                     console.log(`[StreamDebug] Processing thinking content: ${part.text.length} chars`);
 
-                    // 分离思考内容和对话回复
-                    const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(part.text);
-
-                    if (exposeThinkingToClient && thinking.trim()) {
-                      console.log(`[StreamDebug] Creating thinking block: ${thinking.length} chars`);
-
-                      // 发送thinking content block
-                      const thinkingBlockStart: ClaudeStreamEvent = {
-                        type: 'content_block_start',
-                        index: currentBlockIndex,
-                        content_block: {
-                          type: 'thinking',
-                          thinking: '',
-                          signature: ThinkingTransformer.generateThinkingSignature(thinking)
-                        } as ClaudeThinkingBlock
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
-
-                      const thinkingDelta: ClaudeStreamEvent = {
-                        type: 'content_block_delta',
-                        index: currentBlockIndex,
-                        delta: {
-                          type: 'thinking_delta',
-                          thinking: thinking
-                        }
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
-
-                      const thinkingBlockStop: ClaudeStreamEvent = {
-                        type: 'content_block_stop',
-                        index: currentBlockIndex
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
-
-                      currentBlockIndex++;
+                    // 检查思考内容是否包含特殊的终止标记
+                    if (part.text.includes('isNewTopic')) {
+                      console.warn('[StreamDebug] Thinking content contains isNewTopic, this may indicate conversation termination');
+                      // 对于 Flash 模型，isNewTopic 可能出现在 thinking 内容中
+                      // 这不应该导致连接终断，继续处理
                     }
 
-                    // 发送对话回复内容（如果有）
-                    if (response && response.trim()) {
-                      console.log(`[StreamDebug] Creating response text block: ${response.length} chars`);
+                    // 对于 Flash 模型，thought标记表示这是思考内容
+                    // 如果客户端没有启用thinking，应该完全过滤掉
+                    if (!exposeThinkingToClient) {
+                      // 不暴露 thinking 时，完全过滤掉思考内容
+                      console.log(`[StreamDebug] Filtering out thinking content (client did not enable thinking): ${part.text.length} chars`);
 
-                      // 不使用状态管理器检测，因为这是从thinking分离出的新内容
-                      // 直接发送响应内容，确保对话回复能够显示
+                      // 重置状态管理器，确保后续正常内容不受影响
+                      stateManager.resetTextTracking();
 
-                      // 如果没有发送过任何文本内容块，先发送content_block_start
-                      if (currentBlockIndex === 0 || (exposeThinkingToClient && currentBlockIndex === 1)) {
-                        const responseBlockStart: ClaudeStreamEvent = {
+                      // 跳过这个thinking内容，继续处理下一个part
+                      continue;
+                    } else {
+                      // 原有的 thinking 暴露逻辑
+                      // 分离思考内容和对话回复
+                      const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(part.text);
+
+                      if (thinking.trim()) {
+                        console.log(`[StreamDebug] Creating thinking block: ${thinking.length} chars`);
+
+                        // 发送thinking content block
+                        const thinkingBlockStart: ClaudeStreamEvent = {
                           type: 'content_block_start',
                           index: currentBlockIndex,
                           content_block: {
-                            type: 'text',
-                            text: ''
-                          } as ClaudeTextBlock
+                            type: 'thinking',
+                            thinking: '',
+                            signature: ThinkingTransformer.generateThinkingSignature(thinking)
+                          } as ClaudeThinkingBlock
                         };
-                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(responseBlockStart)}\n\n`));
+                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
+
+                        const thinkingDelta: ClaudeStreamEvent = {
+                          type: 'content_block_delta',
+                          index: currentBlockIndex,
+                          delta: {
+                            type: 'thinking_delta',
+                            thinking: thinking
+                          }
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
+
+                        const thinkingBlockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: currentBlockIndex
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
+
+                        currentBlockIndex++;
                       }
 
-                      const responseDelta: ClaudeStreamEvent = {
-                        type: 'content_block_delta',
-                        index: currentBlockIndex,
-                        delta: {
-                          type: 'text_delta',
-                          text: response
+                      // 发送对话回复内容（如果有）
+                      if (response && response.trim()) {
+                        console.log(`[StreamDebug] Creating response text block: ${response.length} chars`);
+
+                        // 不使用状态管理器检测，因为这是从thinking分离出的新内容
+                        // 直接发送响应内容，确保对话回复能够显示
+
+                        // 如果没有发送过任何文本内容块，先发送content_block_start
+                        if (currentBlockIndex === 0 || (exposeThinkingToClient && currentBlockIndex === 1)) {
+                          const responseBlockStart: ClaudeStreamEvent = {
+                            type: 'content_block_start',
+                            index: currentBlockIndex,
+                            content_block: {
+                              type: 'text',
+                              text: ''
+                            } as ClaudeTextBlock
+                          };
+                          controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(responseBlockStart)}\n\n`));
                         }
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(responseDelta)}\n\n`));
 
-                      const responseBlockStop: ClaudeStreamEvent = {
-                        type: 'content_block_stop',
-                        index: currentBlockIndex
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(responseBlockStop)}\n\n`));
+                        const responseDelta: ClaudeStreamEvent = {
+                          type: 'content_block_delta',
+                          index: currentBlockIndex,
+                          delta: {
+                            type: 'text_delta',
+                            text: response
+                          }
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(responseDelta)}\n\n`));
 
-                      currentBlockIndex++;
-                      currentTextContent += response;
+                        const responseBlockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: currentBlockIndex
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(responseBlockStop)}\n\n`));
+
+                        currentBlockIndex++;
+                        currentTextContent += response;
+                      }
                     }
 
                     continue; // 思考内容处理完毕
@@ -549,9 +600,49 @@ export class StreamTransformer {
                 }
               }
 
+              // 检查是否有 isNewTopic 或其他特殊终止
+              if (geminiChunk.candidates?.[0]?.finishReason === 'OTHER' ||
+                  geminiChunk.candidates?.[0]?.finishReason === 'BLOCKED_PROMPT' ||
+                  (geminiChunk.promptFeedback?.blockReason)) {
+                console.warn('[StreamTransformer] Special termination detected:', {
+                  finishReason: geminiChunk.candidates?.[0]?.finishReason,
+                  blockReason: geminiChunk.promptFeedback?.blockReason,
+                  raw: JSON.stringify(geminiChunk)
+                });
+              }
+
               // 检查是否完成
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
                 streamFinished = true; // 标记流已完成，防止重复处理
+
+                // 如果没有发送过任何内容（因为都是被过滤的thinking），需要发送一个空响应
+                if (!currentTextContent && currentBlockIndex === 0) {
+                  console.warn('[StreamDebug] Stream finished but no content was sent (all content was filtered thinking)');
+
+                  // 发送一个提示消息
+                  const emptyBlockStart: ClaudeStreamEvent = {
+                    type: 'content_block_start',
+                    index: 0,
+                    content_block: {
+                      type: 'text',
+                      text: ''
+                    }
+                  };
+                  controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(emptyBlockStart)}\n\n`));
+
+                  const emptyDelta: ClaudeStreamEvent = {
+                    type: 'content_block_delta',
+                    index: 0,
+                    delta: {
+                      type: 'text_delta',
+                      text: '正在处理您的请求...'
+                    }
+                  };
+                  controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(emptyDelta)}\n\n`));
+
+                  currentTextContent = '正在处理您的请求...';
+                }
+
                 // 发送content_block_stop（只有当前块是文本块时）
                 if (currentBlockIndex === 0 || (currentBlockIndex > 0 && currentTextContent)) {
                   const blockStop: ClaudeStreamEvent = {
@@ -582,7 +673,7 @@ export class StreamTransformer {
                   type: 'message_delta',
                   delta: {
                     stop_reason: stopInfo.stop_reason,
-                    stop_sequence: stopInfo.stop_sequence || undefined
+                    stop_sequence: stopInfo.stop_sequence
                   },
                   usage: {
                     output_tokens: totalOutputTokens
@@ -597,7 +688,21 @@ export class StreamTransformer {
                 controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`));
               }
             } catch (e) {
-               
+              console.error('[StreamTransformer] Error parsing Gemini response:', e);
+              console.error('[StreamTransformer] Raw data that failed to parse:', data);
+
+              // 检查是否是 isNewTopic 相关的特殊响应
+              if (data && typeof data === 'string' && data.includes('isNewTopic')) {
+                console.warn('[StreamTransformer] Detected isNewTopic in response, conversation may have been terminated');
+
+                // 不要在这里发送结束事件，因为这可能会导致重复的结束事件
+                // 相反，让正常的流程处理结束
+                // 只需要记录这个情况，继续处理下一个数据块
+                continue;
+              }
+
+              // 对于其他解析错误，继续处理下一个数据块
+              continue;
             }
           }
         } catch (error) {
@@ -681,11 +786,23 @@ export class StreamTransformer {
                   }
                 }
               } catch (e) {
-                 
+                console.error('[StreamTransformer] Error processing final chunk in flush:', e);
+                console.error('[StreamTransformer] Failed data:', data);
+
+                // 检查是否是 isNewTopic 相关的响应
+                if (data && typeof data === 'string' && data.includes('isNewTopic')) {
+                  console.warn('[StreamTransformer] Detected isNewTopic in final flush, conversation was terminated');
+                }
               }
             }
           } catch (e) {
-            // 忽略最后的不完整数据
+            console.warn('[StreamTransformer] Error processing buffer in flush:', e);
+            console.warn('[StreamTransformer] Buffer content:', buffer);
+
+            // 检查缓冲区是否包含 isNewTopic
+            if (buffer && buffer.includes('isNewTopic')) {
+              console.warn('[StreamTransformer] Detected isNewTopic in buffer during flush');
+            }
           }
         }
 
@@ -702,8 +819,7 @@ export class StreamTransformer {
           const messageDelta: ClaudeStreamEvent = {
             type: 'message_delta',
             delta: {
-              stop_reason: 'end_turn',
-              stop_sequence: undefined
+              stop_reason: 'end_turn'
             },
             usage: {
               output_tokens: totalOutputTokens || currentTextContent.length / 4

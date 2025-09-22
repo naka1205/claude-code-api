@@ -41,6 +41,14 @@ export class ClientManager {
   }
 
   /**
+   * 获取超时配置
+   */
+  getTimeout(): number {
+    const appConfig = this.getAppConfig();
+    return appConfig.gemini.timeout;
+  }
+
+  /**
    * 获取缓存的应用配置
    */
   private getAppConfig(): Config {

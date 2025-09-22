@@ -13,7 +13,7 @@ import { ResponseManager } from './response-manager';
 import { ApiKeyManager } from './api-key-manager';
 import { KeyUsageCache } from './key-usage-cache';
 import { ApiResponse } from '../client';
-import { generateRequestId } from '../utils/common';
+import { generateRequestId, createErrorContext, maskApiKey, maskSensitiveData } from '../utils/common';
 
 export interface HandlerConfig {
   enableValidation: boolean;
@@ -222,22 +222,61 @@ export class RequestHandler {
           );
         }
       } catch (networkError) {
-        // 网络错误 - 直接返回错误
+        // 网络错误 - 记录详细信息并返回错误
+        const errorContext = createErrorContext(
+          'RequestHandler',
+          'handleMessagesRequest - Network Request',
+          networkError,
+          {
+            requestId: finalRequestId,
+            selectedKeyMasked: maskApiKey(selectedKey),
+            endpoint,
+            geminiModel,
+            isStream: claudeRequest.stream,
+            duration: Date.now() - startTime
+          }
+        );
+
+        console.error('[RequestHandler] Network error to Gemini API:', {
+          ...errorContext,
+          networkDetails: {
+            timeout: this.clientManager.getTimeout?.() || 'unknown',
+            retryable: networkError instanceof Error &&
+              ['ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'].includes((networkError as any).code)
+          }
+        });
+
         await KeyUsageCache.onError(selectedKey, 500);
         return this.responseManager.createErrorResponse(
           502,
-          `Failed to connect to Gemini API: ${networkError instanceof Error ? networkError.message : 'Network error'}`
+          `Failed to connect to Gemini API: ${errorContext.originalError.message}`
         );
       }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
+      const errorContext = createErrorContext(
+        'RequestHandler',
+        'handleMessagesRequest',
+        error,
+        {
+          requestId: finalRequestId,
+          context: {
+            method: context.method,
+            pathname: context.pathname,
+            hasBody: !!context.body,
+            headers: maskSensitiveData(Object.keys(context.headers)),
+            bodyType: context.body ? typeof context.body : 'undefined',
+            bodySize: context.body ? JSON.stringify(context.body).length : 0
+          },
+          duration: Date.now() - startTime
+        }
+      );
 
+      console.error('[RequestHandler] Messages request error:', errorContext);
 
       return this.responseManager.createErrorResponse(
         500,
-        errorMessage || 'Internal server error'
+        errorContext.originalError.message || 'Internal server error'
       );
     }
   }
@@ -307,12 +346,27 @@ export class RequestHandler {
       return this.responseManager.createErrorResponse(500, 'Failed to count tokens');
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
+      const errorContext = createErrorContext(
+        'RequestHandler',
+        'handleCountTokensRequest',
+        error,
+        {
+          requestId: finalRequestId,
+          context: {
+            method: context.method,
+            pathname: context.pathname,
+            model: context.body?.model,
+            hasMessages: !!(context.body?.messages),
+            messageCount: context.body?.messages?.length || 0
+          }
+        }
+      );
+
+      console.error('[RequestHandler] Count tokens request error:', errorContext);
 
       return this.responseManager.createErrorResponse(
         500,
-        errorMessage || 'Internal server error'
+        errorContext.originalError.message || 'Internal server error'
       );
     }
   }
@@ -325,8 +379,19 @@ export class RequestHandler {
       const modelMapper = ModelMapper.getInstance();
       return modelMapper.mapModel(model);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Unsupported model: ${model}. ${errorMessage}`);
+      const errorContext = createErrorContext(
+        'RequestHandler',
+        'getGeminiModel',
+        error,
+        {
+          inputModel: model,
+          availableModels: ModelMapper.getInstance().getSupportedModels?.() || 'unknown'
+        }
+      );
+
+      console.error('[RequestHandler] Model mapping error:', errorContext);
+
+      throw new Error(`Unsupported model: ${model}. ${errorContext.originalError.message}`);
     }
   }
 

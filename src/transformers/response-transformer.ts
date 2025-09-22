@@ -323,6 +323,17 @@ export class ResponseTransformer {
       case 'FUNCTION_CALL':
         stopReason = 'tool_use';
         break;
+      case 'SAFETY':
+      case 'RECITATION':
+        // 处理安全过滤和内容重复等情况，映射为 end_turn
+        stopReason = 'end_turn';
+        Logger.warn('ResponseTransformer', `Response terminated due to safety/recitation: ${finishReason}`);
+        break;
+      case 'OTHER':
+        // Gemini 的 OTHER 状态，可能包含 isNewTopic 等特殊终止原因
+        stopReason = 'end_turn';
+        Logger.info('ResponseTransformer', 'Response terminated with OTHER reason (may include isNewTopic)');
+        break;
       default:
         if (finishReason) {
           Logger.warn('ResponseTransformer', `Unknown finish reason: ${finishReason}`);

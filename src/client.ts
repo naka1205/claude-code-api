@@ -90,8 +90,17 @@ export class GeminiApiClient {
 
     // 添加请求体大小日志
     const requestBody = JSON.stringify(data);
+    const requestSize = new Blob([requestBody]).size;
 
-    
+    console.log('[GeminiApiClient] Sending request:', {
+      endpoint,
+      url: url.toString().replace(/key=[^&]+/, 'key=***'),
+      method: 'POST',
+      requestSizeBytes: requestSize,
+      isStream,
+      timeout: this.timeout,
+      timestamp: new Date().toISOString()
+    });
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -116,13 +125,27 @@ export class GeminiApiClient {
 
       if (response.status >= 400) {
         const errorText = await response.text();
-        
+
+        // Enhanced error logging for API errors
+        console.error('[GeminiApiClient] API error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          endpoint,
+          url: url.toString(),
+          responseText: errorText,
+          headers: headersToObject(response.headers),
+          timestamp: new Date().toISOString()
+        });
 
         // Try to parse as JSON
         let errorBody;
         try {
           errorBody = JSON.parse(errorText);
-        } catch {
+        } catch (parseError) {
+          console.warn('[GeminiApiClient] Failed to parse error response as JSON:', {
+            parseError: parseError instanceof Error ? parseError.message : String(parseError),
+            originalText: errorText
+          });
           errorBody = { message: errorText };
         }
 
@@ -152,9 +175,40 @@ export class GeminiApiClient {
     } catch (error: any) {
       clearTimeout(timeoutId);
 
+      // Enhanced error logging with context
+      const errorContext = {
+        component: 'GeminiApiClient',
+        operation: 'sendRequest',
+        endpoint,
+        url: url.toString(),
+        isStream,
+        timeout: this.timeout,
+        apiKeyMasked: this.apiKeys[0]?.substring(0, 11) + '***'
+      };
+
       if (error.name === 'AbortError') {
-        throw new Error('Request timeout');
+        const timeoutError = new Error(`Request timeout after ${this.timeout}ms`);
+        console.error('[GeminiApiClient] Request timeout:', {
+          ...errorContext,
+          error: timeoutError.message,
+          stack: timeoutError.stack,
+          timestamp: new Date().toISOString()
+        });
+        throw timeoutError;
       }
+
+      // Log detailed network error information
+      console.error('[GeminiApiClient] Network request failed:', {
+        ...errorContext,
+        error: {
+          message: error.message,
+          name: error.name,
+          code: error.code,
+          cause: error.cause
+        },
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
 
       throw error;
     }

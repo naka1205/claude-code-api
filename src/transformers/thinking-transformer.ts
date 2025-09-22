@@ -54,7 +54,7 @@ export class ThinkingTransformer {
     'gemini-2.5-flash': {
       min: 0,
       max: 24576,
-      default: -1, // 动态预算
+      default: 0, // 默认关闭，避免自动启用导致的问题
       canDisable: true
     },
     'gemini-2.5-flash-lite': {
@@ -141,8 +141,9 @@ export class ThinkingTransformer {
       // 动态预算，基于复杂度计算
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
       console.log(`[ThinkingDebug] Dynamic budget calculated: ${budget}`);
-    } else if (budget === 0 && complexity.recommendation === 'enable') {
-      // 默认关闭但建议开启的情况
+    } else if (budget === 0 && complexity.recommendation === 'enable' && geminiModel !== 'gemini-2.5-flash') {
+      // 对于 Gemini 2.5-flash，不自动启用 thinking
+      // 默认关闭但建议开启的情况（仅对非 flash 模型）
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
       console.log(`[ThinkingDebug] Auto-enabled thinking due to complexity: ${budget}`);
     }

@@ -159,6 +159,10 @@ export class ModelMapper {
     const capabilities = getModelCapabilities(geminiModel);
     return capabilities.maxTokens || 8192;
   }
+
+  getSupportedModels(): string[] {
+    return Object.keys(MODEL_MAPPING);
+  }
 }
 
 // 导出类型
