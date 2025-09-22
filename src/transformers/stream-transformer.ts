@@ -615,32 +615,9 @@ export class StreamTransformer {
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
                 streamFinished = true; // 标记流已完成，防止重复处理
 
-                // 如果没有发送过任何内容（因为都是被过滤的thinking），需要发送一个空响应
+                // 如果没有发送过任何内容
                 if (!currentTextContent && currentBlockIndex === 0) {
                   console.warn('[StreamDebug] Stream finished but no content was sent (all content was filtered thinking)');
-
-                  // 发送一个提示消息
-                  const emptyBlockStart: ClaudeStreamEvent = {
-                    type: 'content_block_start',
-                    index: 0,
-                    content_block: {
-                      type: 'text',
-                      text: ''
-                    }
-                  };
-                  controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(emptyBlockStart)}\n\n`));
-
-                  const emptyDelta: ClaudeStreamEvent = {
-                    type: 'content_block_delta',
-                    index: 0,
-                    delta: {
-                      type: 'text_delta',
-                      text: '正在处理您的请求...'
-                    }
-                  };
-                  controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(emptyDelta)}\n\n`));
-
-                  currentTextContent = '正在处理您的请求...';
                 }
 
                 // 发送content_block_stop（只有当前块是文本块时）
