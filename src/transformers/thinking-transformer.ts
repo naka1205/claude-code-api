@@ -88,81 +88,90 @@ export class ThinkingTransformer {
       return null; // 模型不支持thinking
     }
 
+    // 规范化模型族判断
+    const isPro = geminiModel === 'gemini-2.5-pro';
+    const isFlash = geminiModel === 'gemini-2.5-flash' || geminiModel === 'gemini-2.5-flash-lite';
+
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
-        let budget = claudeThinking.budget_tokens || this.calculateOptimalBudget(claudeRequest, geminiModel);
-
-        // 根据模型限制调整预算
-        if (budget > 0) {
-          budget = Math.max(limits.min, Math.min(budget, limits.max));
-        } else {
-          budget = limits.default;
+        // 客户端启用但未设置预算 -> Flash/Pro 使用 -1（动态推理）
+        let budget: number | undefined = claudeThinking.budget_tokens;
+        if (budget === undefined || budget === null) {
+          budget = -1; // 动态预算
         }
+
+        // 若为动态预算(-1)，保持 -1 直传给下游；否则进行 min/max 约束
+        if (budget !== -1) {
+          budget = Math.max(limits.min, Math.min(budget, limits.max));
+        }
+
+        // 动态预算时不强制暴露思维给客户端，仅在客户端显式开启时允许
+        const expose = true; // 客户端显式启用 -> 允许暴露
 
         return {
           thinkingBudget: budget,
           includeThoughts: true,
-          exposeThoughtsToClient: true,  // 恢复：客户端启用thinking时应该暴露
-          exposeToClient: true  // 兼容性字段
+          exposeThoughtsToClient: expose,
+          exposeToClient: expose
         };
       } else if (claudeThinking.type === 'disabled') {
-        if (!limits.canDisable) {
-          // 模型不允许禁用thinking，使用最小值
+        // 客户端显式禁用：Flash=0，Pro 也允许内部思考：-1（用户不暴露）
+        if (!limits.canDisable && isPro) {
           return {
-            thinkingBudget: limits.min,
+            thinkingBudget: -1,
             includeThoughts: false,
             exposeThoughtsToClient: false,
-            exposeToClient: false  // 兼容性字段
+            exposeToClient: false
           };
         }
+
         return {
-          thinkingBudget: 0,
+          thinkingBudget: isFlash ? 0 : -1,
           includeThoughts: false,
           exposeThoughtsToClient: false,
-          exposeToClient: false  // 兼容性字段
+          exposeToClient: false
         };
       }
     }
 
-    // 自动判断是否启用thinking (基于复杂度和模型默认)
+    // 未提供 thinking 字段：遵循策略
+    // Flash：未启用 -> 0（禁用）
+    // Pro：未启用 -> -1（动态内部推理，不暴露）
+    if (isFlash) {
+      return {
+        thinkingBudget: 0,
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
+      };
+    }
+    if (isPro) {
+      return {
+        thinkingBudget: -1,
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
+      };
+    }
+
+    // 其它模型：保持原自动策略（与之前一致）
     const complexity = this.analyzeComplexity(claudeRequest);
     let budget = limits.default;
 
-    console.log(`[ThinkingDebug] Auto-thinking analysis for model ${geminiModel}:`, {
-      complexity: complexity.score,
-      recommendation: complexity.recommendation,
-      defaultBudget: limits.default,
-      canDisable: limits.canDisable,
-      requiresReasoning: complexity.factors.requiresReasoning
-    });
-
     if (budget === -1) {
-      // 动态预算，基于复杂度计算
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
-      console.log(`[ThinkingDebug] Dynamic budget calculated: ${budget}`);
     } else if (budget === 0 && complexity.recommendation === 'enable' && geminiModel !== 'gemini-2.5-flash') {
-      // 对于 Gemini 2.5-flash，不自动启用 thinking
-      // 默认关闭但建议开启的情况（仅对非 flash 模型）
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
-      console.log(`[ThinkingDebug] Auto-enabled thinking due to complexity: ${budget}`);
     }
 
-    // 关键：对于Gemini 2.5 Pro，即使自动启用thinking，也不应该暴露给客户端
-    const shouldExposeToClient = false; // 只有显式启用才暴露
-
-    console.log(`[ThinkingDebug] Final auto-thinking config:`, {
-      thinkingBudget: budget,
-      includeThoughts: budget > 0,
-      exposeToClient: shouldExposeToClient,
-      reason: 'Auto-mode: never expose thinking to client unless explicitly enabled'
-    });
+    const shouldExposeToClient = false; // 自动模式不暴露
 
     return {
       thinkingBudget: budget,
       includeThoughts: budget > 0,
-      exposeThoughtsToClient: shouldExposeToClient,  // 自动模式下不暴露
-      exposeToClient: shouldExposeToClient  // 兼容性字段
+      exposeThoughtsToClient: shouldExposeToClient,
+      exposeToClient: shouldExposeToClient
     };
   }
 
