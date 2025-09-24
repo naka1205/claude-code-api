@@ -341,10 +341,9 @@ export class StreamTransformer {
               // 处理文本内容和工具调用
               if (geminiChunk.candidates?.[0]?.content?.parts) {
                 for (const part of geminiChunk.candidates[0].content.parts) {
-                  if ('text' in part && part.text && !('thought' in part)) {
+                  if ('text' in part && part.text && !('thought' in part) && (part as any).thought !== true) {
                     // 只处理非思考的普通文本内容
-                    // thoughtSignature字段的存在不影响这是正常的对话内容
-                    console.log(`[StreamDebug] Processing normal text content: ${part.text.length} chars, hasThoughtSignature: ${'thoughtSignature' in part}`);
+                    console.log(`[StreamDebug] Processing normal text content: ${part.text.length} chars, hasThought: false`);
 
                     // 检测 isNewTopic 元数据
                     // 这是 Claude CLI 的会话管理信息，应该保留并传递给客户端
@@ -385,32 +384,105 @@ export class StreamTransformer {
 
                     controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
                     currentTextContent += incrementalText;
-                  } else if ('thought' in part && 'text' in part) {
-                    // 正确处理Gemini思考格式 - thought是标记，思考内容在text字段中
-                    console.log(`[StreamDebug] Processing thinking content: ${part.text.length} chars`);
+                  } else if (('thought' in part && 'text' in part) || ((part as any).thought === true && 'text' in part)) {
+                    // 正确处理Gemini思考格式
+                    // 注意：Gemini 2.5 Flash 在启用thinking后，会将内容标记为 thought: true
+                    const isThoughtContent = (part as any).thought === true || ('thought' in part && (part as any).thought);
+                    const textContent = 'text' in part ? (part as any).text : '';
+
+                    console.log(`[StreamDebug] Processing content with thought flag: ${isThoughtContent}, text length: ${textContent.length}`);
+
+                    // 检查是否是 Flash 模型
+                    const isFlashModel = claudeModel.toLowerCase().includes('flash') ||
+                                         claudeModel.toLowerCase().includes('sonnet');
 
                     // 检查思考内容是否包含特殊的终止标记
-                    if (part.text.includes('isNewTopic')) {
-                      console.warn('[StreamDebug] Thinking content contains isNewTopic, this may indicate conversation termination');
-                      // 对于 Flash 模型，isNewTopic 可能出现在 thinking 内容中
-                      // 这不应该导致连接终断，继续处理
+                    if (textContent.includes('isNewTopic')) {
+                      console.warn('[StreamDebug] Content contains isNewTopic, may indicate conversation termination');
                     }
 
-                    // 对于 Flash 模型，thought标记表示这是思考内容
-                    // 如果客户端没有启用thinking，应该完全过滤掉
-                    if (!exposeThinkingToClient) {
+                    // 如果客户端没有启用thinking，应该完全过滤掉标记为thought的内容
+                    if (!exposeThinkingToClient && isThoughtContent) {
                       // 不暴露 thinking 时，完全过滤掉思考内容
-                      console.log(`[StreamDebug] Filtering out thinking content (client did not enable thinking): ${part.text.length} chars`);
+                      console.log(`[StreamDebug] Filtering out thinking content (client did not enable thinking): ${textContent.length} chars`);
 
                       // 重置状态管理器，确保后续正常内容不受影响
                       stateManager.resetTextTracking();
 
                       // 跳过这个thinking内容，继续处理下一个part
                       continue;
-                    } else {
-                      // 原有的 thinking 暴露逻辑
-                      // 分离思考内容和对话回复
-                      const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(part.text);
+                    } else if (exposeThinkingToClient && isThoughtContent && isFlashModel) {
+                      // Flash/Sonnet 模型特殊处理：当启用thinking时，Flash模型只返回thinking内容
+                      // 我们需要发送thinking块，同时也需要确保有文本响应
+                      console.log(`[StreamDebug] Flash/Sonnet model with thinking enabled - processing thinking content`);
+
+                      // 1. 发送thinking块
+                      const thinkingBlockStart: ClaudeStreamEvent = {
+                        type: 'content_block_start',
+                        index: currentBlockIndex,
+                        content_block: {
+                          type: 'thinking',
+                          thinking: '',
+                          signature: ThinkingTransformer.generateThinkingSignature(textContent)
+                        } as ClaudeThinkingBlock
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
+
+                      const thinkingDelta: ClaudeStreamEvent = {
+                        type: 'content_block_delta',
+                        index: currentBlockIndex,
+                        delta: {
+                          type: 'thinking_delta',
+                          thinking: textContent
+                        }
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
+
+                      const thinkingBlockStop: ClaudeStreamEvent = {
+                        type: 'content_block_stop',
+                        index: currentBlockIndex
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
+
+                      currentBlockIndex++;
+
+                      // 2. Flash模型问题：当启用thinking后，所有内容都是thinking，没有正常响应
+                      // 因此我们需要将thinking内容也作为响应发送，以确保对话能继续
+                      // 尝试从thinking内容中提取实际响应
+                      const cleanedResponse = textContent.replace(/^\*\*.*?\*\*\n*/gm, '').trim();
+
+                      if (cleanedResponse && currentTextContent === '') {
+                        // 如果还没有文本内容，创建一个文本块
+                        const textBlockStart: ClaudeStreamEvent = {
+                          type: 'content_block_start',
+                          index: currentBlockIndex,
+                          content_block: {
+                            type: 'text',
+                            text: ''
+                          } as ClaudeTextBlock
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(textBlockStart)}\n\n`));
+
+                        // 发送清理后的文本
+                        const textDelta: ClaudeStreamEvent = {
+                          type: 'content_block_delta',
+                          index: currentBlockIndex,
+                          delta: {
+                            type: 'text_delta',
+                            text: cleanedResponse
+                          }
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(textDelta)}\n\n`));
+
+                        currentTextContent += cleanedResponse;
+                        currentBlockIndex++;
+
+                        console.log(`[StreamDebug] Flash model: Created text response from thinking content`);
+                      }
+                    } else if (exposeThinkingToClient && isThoughtContent && !isFlashModel) {
+                      // Pro 模型：使用原有的分离逻辑
+                      // 分离思考内容和对话回复（传入模型类型以支持不同的分离策略）
+                      const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(textContent, claudeModel);
 
                       if (thinking.trim()) {
                         console.log(`[StreamDebug] Creating thinking block: ${thinking.length} chars`);
@@ -489,6 +561,15 @@ export class StreamTransformer {
 
                     continue; // 思考内容处理完毕
                   } else if ('functionCall' in part && part.functionCall) {
+                    // 详细调试：记录函数调用原始数据
+                    console.log(`[FunctionCallDebug] Raw function call detected:`, {
+                      functionCall: part.functionCall,
+                      partKeys: Object.keys(part),
+                      hasArgs: 'args' in part.functionCall,
+                      argsType: typeof part.functionCall.args,
+                      argsContent: part.functionCall.args
+                    });
+
                     // 使用状态管理器进行函数调用去重
                     const functionCall = part.functionCall;
                     const signature = stateManager.generateFunctionSignature(functionCall);
@@ -516,12 +597,26 @@ export class StreamTransformer {
 
                     // 处理args - 可能是字符串或对象
                     let args = part.functionCall.args || {};
+                    console.log(`[FunctionCallDebug] Processing args:`, {
+                      originalArgs: part.functionCall.args,
+                      originalType: typeof part.functionCall.args,
+                      isEmpty: !part.functionCall.args
+                    });
+
                     if (typeof args === 'string') {
+                      console.log(`[FunctionCallDebug] Args is string, attempting to parse:`, args);
                       try {
                         args = JSON.parse(args);
+                        console.log(`[FunctionCallDebug] Successfully parsed args:`, args);
                       } catch (e) {
+                        console.error(`[FunctionCallDebug] Failed to parse args as JSON:`, {
+                          error: e.message,
+                          originalArgs: args
+                        });
                         args = {};
                       }
+                    } else {
+                      console.log(`[FunctionCallDebug] Args is object:`, args);
                     }
 
                     // TodoWrite 工具不需要特殊处理 - Claude Code 客户端会自行处理显示
@@ -620,13 +715,24 @@ export class StreamTransformer {
                   console.warn('[StreamDebug] Stream finished but no content was sent (all content was filtered thinking)');
                 }
 
-                // 发送content_block_stop（只有当前块是文本块时）
-                if (currentBlockIndex === 0 || (currentBlockIndex > 0 && currentTextContent)) {
+                // 发送content_block_stop（处理索引计算）
+                if (currentTextContent) {
+                  // 如果有文本内容，关闭最后一个文本块
+                  const textBlockIndex = currentBlockIndex > 0 ? currentBlockIndex : 0;
                   const blockStop: ClaudeStreamEvent = {
                     type: 'content_block_stop',
-                    index: currentBlockIndex === 0 ? 0 : currentBlockIndex - 1
+                    index: textBlockIndex
                   };
                   controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
+                  console.log(`[StreamDebug] Closed text block at index ${textBlockIndex}`);
+                } else if (currentBlockIndex > 0) {
+                  // 没有文本内容但有其他块（如thinking块），关闭最后一个块
+                  const blockStop: ClaudeStreamEvent = {
+                    type: 'content_block_stop',
+                    index: currentBlockIndex - 1
+                  };
+                  controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
+                  console.log(`[StreamDebug] Closed last block at index ${currentBlockIndex - 1}`);
                 }
 
                 // 更新token统计 - 包含思维令牌和缓存令牌信息

@@ -99,7 +99,8 @@ export class RequestTransformer {
         const thinkingConfig = ThinkingTransformer.transformThinking(
           claudeRequest.thinking,
           geminiModel,
-          claudeRequest
+          claudeRequest,
+          !!(claudeRequest.tools && claudeRequest.tools.length > 0)  // 传入工具存在状态
         );
 
         Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);

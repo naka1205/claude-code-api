@@ -71,6 +71,27 @@ export class ResponseTransformer {
         totalTokens: geminiResponse.usageMetadata?.totalTokenCount
       });
 
+      // 详细调试：当出现MALFORMED_FUNCTION_CALL时记录完整响应
+      if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
+        console.error(`[ResponseTransformer][MALFORMED_FUNCTION_CALL] Complete Gemini response:`,
+          JSON.stringify(geminiResponse, null, 2));
+
+        console.error(`[ResponseTransformer][MALFORMED_FUNCTION_CALL] Candidate details:`, {
+          finishReason: candidate.finishReason,
+          hasContent: !!candidate.content,
+          hasParts: !!candidate.content?.parts,
+          partsCount: candidate.content?.parts?.length || 0,
+          parts: candidate.content?.parts?.map((part, index) => ({
+            index,
+            keys: Object.keys(part),
+            hasText: 'text' in part,
+            hasFunctionCall: 'functionCall' in part,
+            hasThought: 'thought' in part,
+            content: part
+          })) || []
+        });
+      }
+
       // 转换内容块
       let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient);
 
@@ -222,17 +243,41 @@ export class ResponseTransformer {
     // 函数调用部分
     if ('functionCall' in part) {
       const functionCall = part as GeminiFunctionCallPart;
+
+      // 详细调试：记录函数调用转换过程
+      console.log(`[ResponseTransformer][FunctionCallDebug] Processing function call:`, {
+        functionCall: functionCall.functionCall,
+        partKeys: Object.keys(part),
+        hasArgs: 'args' in functionCall.functionCall,
+        argsType: typeof functionCall.functionCall.args,
+        argsContent: functionCall.functionCall.args
+      });
+
       // 生成工具使用ID
       const toolUseId = `toolu_${Math.random().toString(36).substr(2, 23)}`;
 
       // 处理args - 可能是字符串或对象
       let args = functionCall.functionCall.args || {};
+      console.log(`[ResponseTransformer][FunctionCallDebug] Processing args:`, {
+        originalArgs: functionCall.functionCall.args,
+        originalType: typeof functionCall.functionCall.args,
+        isEmpty: !functionCall.functionCall.args
+      });
+
       if (typeof args === 'string') {
+        console.log(`[ResponseTransformer][FunctionCallDebug] Args is string, attempting to parse:`, args);
         try {
           args = JSON.parse(args);
+          console.log(`[ResponseTransformer][FunctionCallDebug] Successfully parsed args:`, args);
         } catch (e) {
+          console.error(`[ResponseTransformer][FunctionCallDebug] Failed to parse args as JSON:`, {
+            error: e.message,
+            originalArgs: args
+          });
           args = {};
         }
+      } else {
+        console.log(`[ResponseTransformer][FunctionCallDebug] Args is object:`, args);
       }
 
       return {

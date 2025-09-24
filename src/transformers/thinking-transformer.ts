@@ -80,7 +80,8 @@ export class ThinkingTransformer {
   static transformThinking(
     claudeThinking: ClaudeThinking | undefined,
     geminiModel: string,
-    claudeRequest: ClaudeRequest
+    claudeRequest: ClaudeRequest,
+    hasTools: boolean = false  // 新增参数：是否有工具定义
   ): ThinkingConfig | null {
     // 获取模型限制
     const limits = this.THINKING_LIMITS[geminiModel];
@@ -91,6 +92,18 @@ export class ThinkingTransformer {
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
+        // Flash 模型特殊处理：当有工具时禁用thinking
+        // Flash模型的thinking + 工具组合会导致MALFORMED_FUNCTION_CALL错误
+        if (geminiModel.includes('flash') && hasTools) {
+          console.log(`[ThinkingDebug] Flash model: Disabling thinking when tools are present to avoid MALFORMED_FUNCTION_CALL`);
+          return {
+            thinkingBudget: 0,  // 禁用thinking
+            includeThoughts: false,
+            exposeThoughtsToClient: false,
+            exposeToClient: false
+          };
+        }
+
         let budget = claudeThinking.budget_tokens || this.calculateOptimalBudget(claudeRequest, geminiModel);
 
         // 根据模型限制调整预算
@@ -137,15 +150,21 @@ export class ThinkingTransformer {
       requiresReasoning: complexity.factors.requiresReasoning
     });
 
+    // Flash模型特殊处理：不自动启用thinking，除非明确请求
+    const isFlashModel = geminiModel.includes('flash');
+
     if (budget === -1) {
       // 动态预算，基于复杂度计算
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
       console.log(`[ThinkingDebug] Dynamic budget calculated: ${budget}`);
-    } else if (budget === 0 && complexity.recommendation === 'enable' && geminiModel !== 'gemini-2.5-flash') {
-      // 对于 Gemini 2.5-flash，不自动启用 thinking
+    } else if (budget === 0 && complexity.recommendation === 'enable' && !isFlashModel) {
+      // 对于 Gemini 2.5-flash，永不自动启用 thinking
       // 默认关闭但建议开启的情况（仅对非 flash 模型）
       budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
       console.log(`[ThinkingDebug] Auto-enabled thinking due to complexity: ${budget}`);
+    } else if (isFlashModel && budget === 0) {
+      // Flash模型：保持禁用状态
+      console.log(`[ThinkingDebug] Flash model: keeping thinking disabled by default`);
     }
 
     // 关键：对于Gemini 2.5 Pro，即使自动启用thinking，也不应该暴露给客户端
@@ -155,7 +174,7 @@ export class ThinkingTransformer {
       thinkingBudget: budget,
       includeThoughts: budget > 0,
       exposeToClient: shouldExposeToClient,
-      reason: 'Auto-mode: never expose thinking to client unless explicitly enabled'
+      reason: isFlashModel ? 'Flash model: auto-mode disabled by default' : 'Auto-mode: never expose thinking to client unless explicitly enabled'
     });
 
     return {
@@ -525,14 +544,23 @@ export class ThinkingTransformer {
   /**
    * 从思考内容中分离对话回复
    * 作为代理服务，只根据Gemini的返回格式进行转换，不做复杂的内容判断
+   * 注意：Flash模型和Pro模型的thinking格式可能不同
    */
-  static separateThinkingAndResponse(thinkingText: string): {
+  static separateThinkingAndResponse(thinkingText: string, modelType?: string): {
     thinking: string;
     response: string;
   } {
-    // 简化逻辑：对于Gemini标记为thought的内容，默认保持为thinking
-    // 只在有明确分隔符的情况下才分离
+    // Flash/Sonnet模型不应该尝试分离，因为它们的thinking格式不同
+    if (modelType && (modelType.includes('flash') || modelType.includes('sonnet'))) {
+      // Flash模型：整个内容都是thinking，不分离
+      return {
+        thinking: thinkingText,
+        response: ''
+      };
+    }
 
+    // Pro模型：尝试分离thinking和response
+    // 只在有明确分隔符的情况下才分离
     const explicitSeparators = [
       /\n\n---+\s*(?:RESPONSE|FINAL RESPONSE|回复|最终回复)\s*---+\s*\n\n/i,
       /\n\n##\s*(?:Response|Final Response|回复|最终回复)\s*\n\n/i

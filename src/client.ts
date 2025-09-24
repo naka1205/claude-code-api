@@ -102,6 +102,25 @@ export class GeminiApiClient {
       timestamp: new Date().toISOString()
     });
 
+    // 详细调试：记录请求体结构（当有thinking配置时）
+    if (data.generationConfig?.thinkingConfig) {
+      console.log('[GeminiApiClient][ThinkingDebug] Request with thinking config:', {
+        thinkingConfig: data.generationConfig.thinkingConfig,
+        hasTools: !!data.tools && data.tools.length > 0,
+        toolsCount: data.tools?.length || 0,
+        contentsCount: data.contents?.length || 0,
+        hasSystemInstruction: !!data.systemInstruction
+      });
+
+      // 记录工具定义
+      if (data.tools && data.tools.length > 0) {
+        console.log('[GeminiApiClient][ThinkingDebug] Tools defined:', data.tools.map(tool => ({
+          functionsCount: tool.functionDeclarations?.length || 0,
+          functionNames: tool.functionDeclarations?.map(f => f.name) || []
+        })) || []);
+      }
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 

@@ -173,14 +173,44 @@ export class RequestHandler {
       // 5. 创建客户端（使用选定的密钥）
       const client = this.clientManager.createClient([selectedKey]);
 
-      // 6. 确定端点
-      const endpoint = this.getGeminiEndpoint(claudeRequest.model, claudeRequest.stream);
+      // 6. 确定端点和流式模式
+      // Flash模型thinking模式兼容性修复：强制使用流式API
+      // 当Flash模型启用thinking且有工具时，非流式API会产生MALFORMED_FUNCTION_CALL
+      let forceStream = claudeRequest.stream;
+
+      console.log(`[RequestHandler][FlashThinkingCheck] Checking force stream conditions:`, {
+        originalStream: claudeRequest.stream,
+        geminiModel,
+        isFlashModel: geminiModel.includes('flash'),
+        thinkingBudget: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget,
+        thinkingBudgetNotZero: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget !== 0,
+        hasTools: !!(geminiRequest.tools && geminiRequest.tools.length > 0),
+        toolsLength: geminiRequest.tools?.length || 0
+      });
+
+      if (!forceStream &&
+          geminiModel.includes('flash') &&
+          geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget !== 0 &&
+          geminiRequest.tools && geminiRequest.tools.length > 0) {
+
+        console.log(`[RequestHandler][FlashThinkingFix] Forcing stream mode for Flash model with thinking + tools to avoid MALFORMED_FUNCTION_CALL`);
+        forceStream = true;
+      }
+
+      const endpoint = this.getGeminiEndpoint(claudeRequest.model, forceStream);
+
+      console.log(`[RequestHandler][FlashThinkingResult] Final request configuration:`, {
+        originalStream: claudeRequest.stream,
+        forceStream,
+        endpoint,
+        willUseStream: forceStream
+      });
 
       // 7. 发送请求 - 添加更好的错误处理
       try {
-        if (claudeRequest.stream) {
-          // 流式响应
-          
+        if (forceStream) {
+          // 流式响应（包括强制流式）
+
           const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
 
           const duration = Date.now() - startTime;

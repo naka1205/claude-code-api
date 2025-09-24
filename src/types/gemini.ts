@@ -13,6 +13,7 @@ export type GeminiRole = 'user' | 'model' | 'system' | 'tool';
  */
 export interface GeminiTextPart {
   text: string;
+  thought?: boolean;  // Gemini 2.5 thinking 标记
 }
 
 /**
