@@ -40,13 +40,6 @@ export class Logger {
       this.logs.shift(); // 移除最旧的日志
     }
 
-    // 同时输出到console
-    const logMessage = `[${entry.timestamp}] [${level}] [${component}] ${message}`;
-    if (data) {
-      console.log(logMessage, JSON.stringify(data, null, 2));
-    } else {
-      console.log(logMessage);
-    }
   }
 
   /**

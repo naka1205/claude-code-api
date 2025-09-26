@@ -125,26 +125,90 @@ export class RequestTransformer {
       };
 
       // 处理系统消息
-      if (claudeRequest.system) {
-        geminiRequest.systemInstruction = this.transformSystemMessage(claudeRequest.system);
+      let systemInstruction = claudeRequest.system ? this.transformSystemMessage(claudeRequest.system) : null;
+
+      // 检查是否需要为 FLASH + thinking + tools 添加工具调用模板
+      const needsTemplate = ThinkingTransformer.needsToolCallTemplate(
+        claudeRequest,
+        geminiModel,
+        !!(claudeRequest.tools && claudeRequest.tools.length > 0)
+      );
+
+      if (needsTemplate) {
+        const templateInstruction = ThinkingTransformer.generateToolCallTemplateInstruction(claudeRequest);
+
+        if (systemInstruction) {
+          // 将模板指令附加到现有系统指令
+          if (systemInstruction.parts && systemInstruction.parts[0] && 'text' in systemInstruction.parts[0]) {
+            systemInstruction.parts[0].text += '\n\n' + templateInstruction;
+          }
+        } else {
+          // 创建新的系统指令
+          systemInstruction = {
+            role: 'system',
+            parts: [{
+              text: templateInstruction
+            }]
+          };
+        }
+
+        Logger.info('RequestTransformer', 'Added tool call template for FLASH + thinking + tools (with parsing fallback)', {
+          model: geminiModel,
+          hasThinking: claudeRequest.thinking?.type === 'enabled',
+          toolCount: claudeRequest.tools?.length || 0
+        });
       }
 
-      // 9. 处理工具
+      if (systemInstruction) {
+        geminiRequest.systemInstruction = systemInstruction;
+      }
+
+      // 9. 处理工具 - 对于需要模板的情况，只传递核心工具给Gemini
       if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-        const toolResult = ToolTransformer.convertTools(claudeRequest.tools);
-        if (toolResult.tools.length > 0) {
-          geminiRequest.tools = toolResult.tools;
-        }
+        // 检查是否需要模板方案
+        const needsTemplate = ThinkingTransformer.needsToolCallTemplate(
+          claudeRequest,
+          geminiModel,
+          true
+        );
 
-        // 检测到特殊工具，启用特殊工具处理
-        if (toolResult.hasSpecialTools) {
-          transformOptions.enableSpecialToolHandling = true;
-        }
+        if (needsTemplate) {
+          // 使用模板方案，过滤复杂工具给Gemini，减少MALFORMED_FUNCTION_CALL概率
+          // 虽然仍可能出现MALFORMED_FUNCTION_CALL，但response-transformer会解析模板并纠正
+          const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];
+          const filteredTools = claudeRequest.tools.filter(tool => !excludedTools.includes(tool.name));
 
-        if (claudeRequest.tool_choice) {
-          const toolConfig = ToolTransformer.convertToolChoice(claudeRequest.tool_choice, claudeRequest.tools);
-          if (toolConfig) {
-            geminiRequest.toolConfig = toolConfig;
+          Logger.info('RequestTransformer', 'Using template approach with parsing fallback', {
+            model: geminiModel,
+            originalToolCount: claudeRequest.tools.length,
+            filteredToolCount: filteredTools.length,
+            excludedTools,
+            filteredTools: filteredTools.map(t => t.name)
+          });
+
+          if (filteredTools.length > 0) {
+            const toolResult = ToolTransformer.convertTools(filteredTools);
+            if (toolResult.tools.length > 0) {
+              geminiRequest.tools = toolResult.tools;
+            }
+          }
+        } else {
+          // 正常情况，传递所有tools给Gemini
+          const toolResult = ToolTransformer.convertTools(claudeRequest.tools);
+          if (toolResult.tools.length > 0) {
+            geminiRequest.tools = toolResult.tools;
+          }
+
+          // 检测到特殊工具，启用特殊工具处理
+          if (toolResult.hasSpecialTools) {
+            transformOptions.enableSpecialToolHandling = true;
+          }
+
+          if (claudeRequest.tool_choice) {
+            const toolConfig = ToolTransformer.convertToolChoice(claudeRequest.tool_choice, claudeRequest.tools);
+            if (toolConfig) {
+              geminiRequest.toolConfig = toolConfig;
+            }
           }
         }
       }

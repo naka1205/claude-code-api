@@ -4,6 +4,7 @@
  */
 
 import { ClaudeRequest, ClaudeThinking } from '../types/claude';
+import { Logger } from '../utils/logger';
 
 export interface ThinkingConfig {
   thinkingBudget: number;
@@ -48,19 +49,19 @@ export class ThinkingTransformer {
     'gemini-2.5-pro': {
       min: 128,
       max: 32768,
-      default: -1, // 动态预算
+      default: -1, // 固定使用动态预算
       canDisable: false
     },
     'gemini-2.5-flash': {
       min: 0,
       max: 24576,
-      default: 0, // 默认关闭，避免自动启用导致的问题
+      default: -1, // 统一使用动态预算
       canDisable: true
     },
     'gemini-2.5-flash-lite': {
       min: 512,
       max: 24576,
-      default: 0, // 默认关闭
+      default: -1, // 统一使用动态预算
       canDisable: true
     }
     // 注意: gemini-2.0系列不支持thinking功能
@@ -74,6 +75,140 @@ export class ThinkingTransformer {
   };
 
   /**
+   * 检测是否需要使用工具调用模板解决方案
+   */
+  static needsToolCallTemplate(
+    claudeRequest: ClaudeRequest,
+    geminiModel: string,
+    hasTools: boolean = false
+  ): boolean {
+    // 只对 FLASH 模型 + thinking + tools + 非流式 的组合使用模板
+    const isFlashModel = geminiModel.includes('2.5-flash');
+    const hasThinking = claudeRequest.thinking?.type === 'enabled';
+    const isNonStream = !claudeRequest.stream;
+
+    return isFlashModel && hasThinking && hasTools && isNonStream;
+  }
+
+  /**
+   * 从模板响应中提取工具调用（增强版）
+   */
+  static extractToolCallsFromTemplate(text: string): Array<{ name: string; arguments: any }> | null {
+    if (!text) return null;
+
+    // 多种模板格式支持
+    const patterns = [
+      /<TOOL_CALLS>\s*(\[[\s\S]*?\])\s*<\/TOOL_CALLS>/,
+      /```json\s*(\[[\s\S]*?\])\s*```/,
+      /TOOL_CALLS:\s*(\[[\s\S]*?\])/,
+      // 兜底模式：查找任何看起来像工具调用的JSON数组
+      /\[\s*\{\s*"name":\s*"[^"]+"\s*,\s*"arguments":\s*\{[\s\S]*?\}\s*\}\s*\]/
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        try {
+          const toolCalls = JSON.parse(match[1] || match[0]);
+          if (Array.isArray(toolCalls)) {
+            const validCalls = toolCalls.filter(call => call && call.name);
+            if (validCalls.length > 0) {
+              Logger.info('ThinkingTransformer', 'Successfully extracted tool calls from template', {
+                pattern: pattern.source,
+                callsCount: validCalls.length,
+                calls: validCalls.map(c => ({ name: c.name, hasArgs: !!c.arguments }))
+              });
+              return validCalls;
+            }
+          }
+        } catch (error) {
+          Logger.debug('ThinkingTransformer', 'Failed to parse tool calls with pattern', {
+            pattern: pattern.source,
+            error: error instanceof Error ? error.message : String(error),
+            match: match[1] || match[0]
+          });
+          continue;
+        }
+      }
+    }
+
+    // 最后尝试查找单个工具调用
+    const singleCallPattern = /"name":\s*"([^"]+)"\s*,\s*"arguments":\s*(\{[^}]*\})/g;
+    const singleMatches = [];
+    let singleMatch;
+
+    while ((singleMatch = singleCallPattern.exec(text)) !== null) {
+      try {
+        const args = JSON.parse(singleMatch[2]);
+        singleMatches.push({
+          name: singleMatch[1],
+          arguments: args
+        });
+      } catch (e) {
+        continue;
+      }
+    }
+
+    if (singleMatches.length > 0) {
+      Logger.info('ThinkingTransformer', 'Extracted individual tool calls', {
+        callsCount: singleMatches.length
+      });
+      return singleMatches;
+    }
+
+    return null;
+  }
+
+  /**
+   * 清理响应文本，移除工具调用模板标记（增强版）
+   */
+  static cleanResponseText(text: string): string {
+    if (!text) return text;
+
+    // 移除各种格式的工具调用标记
+    const patterns = [
+      /<TOOL_CALLS>\s*\[[\s\S]*?\]\s*<\/TOOL_CALLS>/g,
+      /```json\s*\[[\s\S]*?\]\s*```/g,
+      /TOOL_CALLS:\s*\[[\s\S]*?\]/g
+    ];
+
+    let cleanedText = text;
+    for (const pattern of patterns) {
+      cleanedText = cleanedText.replace(pattern, '');
+    }
+
+    // 清理多余的空行
+    cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n').trim();
+
+    return cleanedText;
+  }
+
+  /**
+   * 生成工具调用模板的系统指令
+   */
+  static generateToolCallTemplateInstruction(claudeRequest: ClaudeRequest): string {
+    if (!claudeRequest.tools || claudeRequest.tools.length === 0) {
+      return '';
+    }
+
+    const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];  // 过滤掉这些复杂工具
+    const coreTools = claudeRequest.tools
+      .filter(tool => !excludedTools.includes(tool.name))
+      .map(tool => tool.name);
+    const availableTools = coreTools.join(', ');
+
+    return `
+CRITICAL: Use ONLY function calls via the available tools. When calling tools:
+
+1. Use the standard function_call format provided by Gemini
+2. Call tools one at a time when possible
+3. Available core tools: ${availableTools}
+
+Do NOT use any template formats like <TOOL_CALLS> or JSON arrays.
+Use the native function calling mechanism only.`.trim();
+  }
+
+  /**
    * 转换Claude thinking配置为Gemini格式 (增强版本)
    * 正确处理Claude Extended Thinking与Gemini thinkingConfig的转换
    */
@@ -83,40 +218,59 @@ export class ThinkingTransformer {
     claudeRequest: ClaudeRequest,
     hasTools: boolean = false  // 新增参数：是否有工具定义
   ): ThinkingConfig | null {
+    // 检查是否是2.0系列模型，它们不支持thinking
+    if (geminiModel.includes('2.0') || geminiModel.includes('exp-1206')) {
+      // 2.0系列和实验模型不支持thinking，必须禁用以防止接口报错
+      return {
+        thinkingBudget: 0,  // 禁用thinking
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
+      };
+    }
+
     // 获取模型限制
     const limits = this.THINKING_LIMITS[geminiModel];
     if (!limits) {
-      return null; // 模型不支持thinking
+      // 未知模型，默认禁用thinking
+      return {
+        thinkingBudget: 0,
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
+      };
+    }
+
+    // 检测问题组合：FLASH + thinking + tools + 流式 容易导致只输出thinking不执行工具
+    const isFlashModel = geminiModel.includes('2.5-flash');
+    const isStream = claudeRequest.stream === true;
+    const hasThinking = claudeRequest.thinking?.type === 'enabled' || !claudeThinking;
+
+    if (isFlashModel && hasThinking && hasTools && isStream) {
+      Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + thinking + tools + stream', {
+        model: geminiModel,
+        hasTools,
+        isStream,
+        thinking: claudeRequest.thinking?.type
+      });
+
+      // 对于流式请求，降低thinking预算避免"思考陷阱"
+      return {
+        thinkingBudget: 512,  // 使用较低的固定预算
+        includeThoughts: true,
+        exposeThoughtsToClient: claudeRequest.thinking?.type === 'enabled',
+        exposeToClient: claudeRequest.thinking?.type === 'enabled'
+      };
     }
 
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
-        // Flash 模型特殊处理：当有工具时禁用thinking
-        // Flash模型的thinking + 工具组合会导致MALFORMED_FUNCTION_CALL错误
-        if (geminiModel.includes('flash') && hasTools) {
-          console.log(`[ThinkingDebug] Flash model: Disabling thinking when tools are present to avoid MALFORMED_FUNCTION_CALL`);
-          return {
-            thinkingBudget: 0,  // 禁用thinking
-            includeThoughts: false,
-            exposeThoughtsToClient: false,
-            exposeToClient: false
-          };
-        }
-
-        let budget = claudeThinking.budget_tokens || this.calculateOptimalBudget(claudeRequest, geminiModel);
-
-        // 根据模型限制调整预算
-        if (budget > 0) {
-          budget = Math.max(limits.min, Math.min(budget, limits.max));
-        } else {
-          budget = limits.default;
-        }
-
+        // 统一所有模型的处理：启用thinking时固定使用-1（动态预算）
         return {
-          thinkingBudget: budget,
+          thinkingBudget: -1,  // 固定使用动态预算
           includeThoughts: true,
-          exposeThoughtsToClient: true,  // 恢复：客户端启用thinking时应该暴露
+          exposeThoughtsToClient: true,  // 客户端启用thinking时应该暴露
           exposeToClient: true  // 兼容性字段
         };
       } else if (claudeThinking.type === 'disabled') {
@@ -138,50 +292,13 @@ export class ThinkingTransformer {
       }
     }
 
-    // 自动判断是否启用thinking (基于复杂度和模型默认)
-    const complexity = this.analyzeComplexity(claudeRequest);
-    let budget = limits.default;
-
-    console.log(`[ThinkingDebug] Auto-thinking analysis for model ${geminiModel}:`, {
-      complexity: complexity.score,
-      recommendation: complexity.recommendation,
-      defaultBudget: limits.default,
-      canDisable: limits.canDisable,
-      requiresReasoning: complexity.factors.requiresReasoning
-    });
-
-    // Flash模型特殊处理：不自动启用thinking，除非明确请求
-    const isFlashModel = geminiModel.includes('flash');
-
-    if (budget === -1) {
-      // 动态预算，基于复杂度计算
-      budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
-      console.log(`[ThinkingDebug] Dynamic budget calculated: ${budget}`);
-    } else if (budget === 0 && complexity.recommendation === 'enable' && !isFlashModel) {
-      // 对于 Gemini 2.5-flash，永不自动启用 thinking
-      // 默认关闭但建议开启的情况（仅对非 flash 模型）
-      budget = this.calculateOptimalBudget(claudeRequest, geminiModel);
-      console.log(`[ThinkingDebug] Auto-enabled thinking due to complexity: ${budget}`);
-    } else if (isFlashModel && budget === 0) {
-      // Flash模型：保持禁用状态
-      console.log(`[ThinkingDebug] Flash model: keeping thinking disabled by default`);
-    }
-
-    // 关键：对于Gemini 2.5 Pro，即使自动启用thinking，也不应该暴露给客户端
-    const shouldExposeToClient = false; // 只有显式启用才暴露
-
-    console.log(`[ThinkingDebug] Final auto-thinking config:`, {
-      thinkingBudget: budget,
-      includeThoughts: budget > 0,
-      exposeToClient: shouldExposeToClient,
-      reason: isFlashModel ? 'Flash model: auto-mode disabled by default' : 'Auto-mode: never expose thinking to client unless explicitly enabled'
-    });
-
+    // 默认情况：客户端未明确启用thinking，所有模型都启用thinking但不暴露给客户端
+    // 统一所有模型使用-1（动态预算）
     return {
-      thinkingBudget: budget,
-      includeThoughts: budget > 0,
-      exposeThoughtsToClient: shouldExposeToClient,  // 自动模式下不暴露
-      exposeToClient: shouldExposeToClient  // 兼容性字段
+      thinkingBudget: -1,  // 固定使用动态预算
+      includeThoughts: true,  // 启用thinking以提升响应质量
+      exposeThoughtsToClient: false,  // 不暴露给客户端
+      exposeToClient: false  // 兼容性字段
     };
   }
 
@@ -313,7 +430,7 @@ export class ThinkingTransformer {
     if (claudeRequest.system) {
       const systemText = typeof claudeRequest.system === 'string' ?
         claudeRequest.system :
-        claudeRequest.system.map(b => b.text || '').join(' ');
+        Array.isArray(claudeRequest.system) ? claudeRequest.system.map(b => b.text || '').join(' ') : '';
       score += Math.min(systemText.length / 200, 10);
     }
 
@@ -424,7 +541,7 @@ export class ThinkingTransformer {
     if (claudeRequest.system) {
       const systemText = typeof claudeRequest.system === 'string' ?
         claudeRequest.system :
-        claudeRequest.system.map(b => b.text || '').join(' ');
+        Array.isArray(claudeRequest.system) ? claudeRequest.system.map(b => b.text || '').join(' ') : '';
       if (predicate(systemText)) return true;
     }
 
@@ -448,6 +565,10 @@ export class ThinkingTransformer {
    * 检查模型是否支持thinking (基于官方文档)
    */
   static modelSupportsThinking(geminiModel: string): boolean {
+    // 2.0系列和实验模型不支持thinking
+    if (geminiModel.includes('2.0') || geminiModel.includes('exp-1206')) {
+      return false;
+    }
     return !!this.THINKING_LIMITS[geminiModel];
   }
 

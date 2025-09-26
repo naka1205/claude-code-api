@@ -8,6 +8,7 @@ import { createCorsHeaders, createResponseHeaders } from './utils/cors';
 import { generateRequestId, headersToObject } from './utils/common';
 import { createErrorResponse } from './utils/response';
 import { Logger } from './utils/logger';
+import { DataSaver } from './utils/data-saver';
 
 export interface Env {
   KV?: KVNamespace;  // Make KV optional
@@ -42,6 +43,8 @@ async function parseBody(request: Request): Promise<any> {
  */
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const startTime = Date.now();
+
     try {
       const url = new URL(request.url);
       const method = request.method;
@@ -103,6 +106,71 @@ export default {
         );
       }
 
+      // 数据查看端点
+      if (method === 'GET' && pathname === '/debug/data') {
+        const requestIdParam = url.searchParams.get('requestId');
+
+        if (requestIdParam) {
+          // 获取特定请求的数据
+          const requestData = DataSaver.getRequestData(requestIdParam);
+          const headers = corsEnabled
+            ? createResponseHeaders('application/json')
+            : new Headers({ 'Content-Type': 'application/json' });
+
+          return new Response(
+            JSON.stringify(requestData || { error: 'Request not found' }, null, 2),
+            { status: requestData ? 200 : 404, headers }
+          );
+        } else {
+          // 获取所有数据概览
+          const allData = DataSaver.getAllData();
+          const summary = Array.from(allData.entries()).map(([id, data]) => ({
+            requestId: id,
+            hasClaudeRequest: !!data.claude?.request,
+            hasClaudeResponse: !!data.claude?.response,
+            hasGeminiRequest: !!data.gemini?.request,
+            hasGeminiResponse: !!data.gemini?.response,
+            claudeModel: data.claude?.request?.model || data.claude?.response?.model,
+            timestamp: data.claude?.request?.timestamp || data.gemini?.request?.timestamp
+          }));
+
+          const headers = corsEnabled
+            ? createResponseHeaders('application/json')
+            : new Headers({ 'Content-Type': 'application/json' });
+
+          return new Response(
+            JSON.stringify({
+              total: allData.size,
+              requests: summary
+            }, null, 2),
+            { status: 200, headers }
+          );
+        }
+      }
+
+      // Debug文件端点
+      if (method === 'GET' && pathname === '/debug/files') {
+        const debugFiles = DataSaver.getDebugFiles();
+        const fileList = Array.from(debugFiles.entries()).map(([filename, content]) => ({
+          filename,
+          timestamp: content.timestamp,
+          type: content.type,
+          size: content.data.length
+        }));
+
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json' });
+
+        return new Response(
+          JSON.stringify({
+            total: debugFiles.size,
+            files: fileList
+          }, null, 2),
+          { status: 200, headers }
+        );
+      }
+
       // Health check endpoint
       if (method === 'GET' && pathname === '/health') {
         const headers = corsEnabled
@@ -142,7 +210,36 @@ export default {
       // Claude API compatibility endpoints
       if (method === 'POST' && pathname === '/v1/messages') {
         Logger.info('Worker', 'Handling messages request', { requestId });
+
+        // 保存客户端原始请求数据
+        DataSaver.saveClaudeRequest(requestId, {
+          method,
+          url: request.url,
+          headers: headerObj,
+          body: body,
+          model: body?.model
+        });
+
         const response = await handler.handleMessagesRequest(context, request, requestId);
+
+        // 保存客户端响应数据
+        const responseBody = await response.clone().text();
+        let parsedResponseBody;
+        try {
+          parsedResponseBody = JSON.parse(responseBody);
+        } catch {
+          parsedResponseBody = responseBody;
+        }
+
+        DataSaver.saveClaudeResponse(requestId, {
+          statusCode: response.status,
+          headers: headersToObject(response.headers),
+          body: parsedResponseBody,
+          isStream: body?.stream || false,
+          model: body?.model,
+          duration: Date.now() - startTime
+        });
+
         Logger.info('Worker', 'Messages request completed', {
           requestId,
           status: response.status
@@ -152,7 +249,37 @@ export default {
 
       if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
         Logger.info('Worker', 'Handling count tokens request', { requestId });
-        return await handler.handleCountTokensRequest(context, request, requestId);
+
+        // 保存客户端原始请求数据
+        DataSaver.saveClaudeRequest(requestId, {
+          method,
+          url: request.url,
+          headers: headerObj,
+          body: body,
+          model: body?.model
+        });
+
+        const response = await handler.handleCountTokensRequest(context, request, requestId);
+
+        // 保存客户端响应数据
+        const responseBody = await response.clone().text();
+        let parsedResponseBody;
+        try {
+          parsedResponseBody = JSON.parse(responseBody);
+        } catch {
+          parsedResponseBody = responseBody;
+        }
+
+        DataSaver.saveClaudeResponse(requestId, {
+          statusCode: response.status,
+          headers: headersToObject(response.headers),
+          body: parsedResponseBody,
+          isStream: false,
+          model: body?.model,
+          duration: Date.now() - startTime
+        });
+
+        return response;
       }
 
       // 404 for unknown endpoints

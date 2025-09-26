@@ -60,8 +60,6 @@ export class ResponseManager {
         }
       );
 
-      console.error('[ResponseManager] Response handling error:', errorContext);
-
       return this.createErrorResponse(
         500,
         errorContext.originalError.message
@@ -93,7 +91,6 @@ export class ResponseManager {
       }
     };
 
-    console.error('[ResponseManager] Gemini API error:', errorContext);
 
     // 提取详细错误信息
     let errorMessage = this.extractErrorMessage(body);
@@ -121,14 +118,12 @@ export class ResponseManager {
         // 处理包含 isNewTopic 或其他对话终止相关的错误
         errorType = 'invalid_request_error';
         errorMessage = 'Conversation was terminated. Please start a new conversation.';
-        console.info('[ResponseManager] Conversation terminated, possibly due to isNewTopic or safety filters');
       }
 
       // 添加更多详细信息
       if (geminiError.details && Array.isArray(geminiError.details)) {
         const details = geminiError.details.map((d: any, index: number) => {
           const detailStr = typeof d === 'string' ? d : JSON.stringify(d);
-          console.log(`[ResponseManager] Error detail ${index + 1}:`, d);
           return detailStr;
         }).join('; ');
 

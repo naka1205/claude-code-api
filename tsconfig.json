@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "lib": ["ES2022", "WebWorker"],
-    "types": ["@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "node"],
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
@@ -15,6 +15,6 @@
     "isolatedModules": true,
     "allowJs": true
   },
-  "include": ["src/worker.ts", "src/handler.ts", "src/transformers/**/*", "src/types/**/*", "src/models.ts", "src/config.ts", "src/cache/**/*", "src/cache.ts", "src/limiter.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

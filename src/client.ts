@@ -5,6 +5,7 @@
 
 import { headersToObject } from './utils/common';
 import { TIMEOUTS } from './utils/constants';
+import { DataSaver } from './utils/data-saver';
 
 /**
  * API客户端配置
@@ -75,10 +76,12 @@ export class GeminiApiClient {
   async sendRequest(
     endpoint: string,
     data: any,
-    isStream: boolean = false
+    isStream: boolean = false,
+    requestId?: string
   ): Promise<ApiResponse | StreamResponse> {
     const apiKey = this.selectRandomApiKey();
     const url = new URL(endpoint, this.baseUrl);
+
 
     // 添加API密钥到查询参数
     url.searchParams.set('key', apiKey);
@@ -92,37 +95,24 @@ export class GeminiApiClient {
     const requestBody = JSON.stringify(data);
     const requestSize = new Blob([requestBody]).size;
 
-    console.log('[GeminiApiClient] Sending request:', {
-      endpoint,
-      url: url.toString().replace(/key=[^&]+/, 'key=***'),
-      method: 'POST',
-      requestSizeBytes: requestSize,
-      isStream,
-      timeout: this.timeout,
-      timestamp: new Date().toISOString()
-    });
 
-    // 详细调试：记录请求体结构（当有thinking配置时）
-    if (data.generationConfig?.thinkingConfig) {
-      console.log('[GeminiApiClient][ThinkingDebug] Request with thinking config:', {
-        thinkingConfig: data.generationConfig.thinkingConfig,
-        hasTools: !!data.tools && data.tools.length > 0,
-        toolsCount: data.tools?.length || 0,
-        contentsCount: data.contents?.length || 0,
-        hasSystemInstruction: !!data.systemInstruction
-      });
-
-      // 记录工具定义
-      if (data.tools && data.tools.length > 0) {
-        console.log('[GeminiApiClient][ThinkingDebug] Tools defined:', data.tools.map(tool => ({
-          functionsCount: tool.functionDeclarations?.length || 0,
-          functionNames: tool.functionDeclarations?.map(f => f.name) || []
-        })) || []);
-      }
-    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    // 保存Gemini请求数据
+    if (requestId) {
+      DataSaver.saveGeminiRequest(requestId, {
+        method: 'POST',
+        url: url.toString(),
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'gemini-code/2.0.0-workers',
+          ...(isStream && { 'Accept': 'text/event-stream' })
+        },
+        body: data,
+      });
+    }
 
     try {
       const response = await fetch(url.toString(), {
@@ -168,6 +158,16 @@ export class GeminiApiClient {
           errorBody = { message: errorText };
         }
 
+        // 保存Gemini错误响应数据
+        if (requestId) {
+          DataSaver.saveGeminiResponse(requestId, {
+            statusCode: response.status,
+            headers,
+            body: errorBody,
+            isStream: false,
+              });
+        }
+
         return {
           statusCode: response.status,
           headers,
@@ -177,6 +177,16 @@ export class GeminiApiClient {
       }
 
       if (isStream && response.body) {
+        // 保存流式响应的初始数据
+        if (requestId) {
+          DataSaver.saveGeminiResponse(requestId, {
+            statusCode: response.status,
+            headers,
+            body: { isStream: true, streamStarted: true },
+            isStream: true,
+              });
+        }
+
         return {
           statusCode: response.status,
           headers,
@@ -184,6 +194,17 @@ export class GeminiApiClient {
         } as StreamResponse;
       } else {
         const body = await response.json();
+
+        // 保存非流式响应数据
+        if (requestId) {
+          DataSaver.saveGeminiResponse(requestId, {
+            statusCode: response.status,
+            headers,
+            body,
+            isStream: false,
+              });
+        }
+
         return {
           statusCode: response.status,
           headers,

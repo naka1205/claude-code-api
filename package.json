@@ -7,7 +7,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test:tools": "node ./scripts/test-tools.js",
-    "test:stream": "node ./scripts/test-stream.js"
+    "test:stream": "node ./scripts/test-stream.js",
+    "export-data": "node export-data.js",
+    "export-data:cleanup": "node export-data.js --cleanup"
   },
   "keywords": [],
   "author": "",

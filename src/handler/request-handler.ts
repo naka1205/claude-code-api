@@ -55,12 +55,6 @@ export class RequestHandler {
     const startTime = Date.now();
     // 使用 requestId 作为会话ID（Claude Code 官方命令行工具）
     const sessionId = finalRequestId;
-    console.log(`[RequestDebug] New request started:`, {
-      requestId: finalRequestId,
-      sessionId,
-      method: context.method,
-      pathname: context.pathname
-    });
 
     try {
       
@@ -101,14 +95,6 @@ export class RequestHandler {
       // 提取thinking配置
       let exposeThinkingToClient = false;
 
-      console.log(`[ThinkingDebug] Client thinking request:`, {
-        requestId: finalRequestId,
-        hasThinkingConfig: !!(claudeRequest as any).thinking,
-        thinkingType: (claudeRequest as any).thinking?.type,
-        claudeModel: claudeRequest.model,
-        geminiModel,
-        isGemini25Pro: geminiModel === 'gemini-2.5-pro'
-      });
 
       if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
         const thinkingConfig = ThinkingTransformer.transformThinking(
@@ -118,25 +104,7 @@ export class RequestHandler {
         );
         exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
 
-        console.log(`[ThinkingDebug] Client enabled thinking - config generated:`, {
-          requestId: finalRequestId,
-          thinkingConfig,
-          exposeThinkingToClient,
-          modelSupportsThinking: ThinkingTransformer.modelSupportsThinking(geminiModel)
-        });
       } else {
-        // 客户端未启用thinking，但检查Gemini 2.5系列模型
-        console.log(`[ThinkingDebug] Client did NOT enable thinking:`, {
-          requestId: finalRequestId,
-          claudeModel: claudeRequest.model,
-          geminiModel,
-          isGemini25Series: geminiModel.startsWith('gemini-2.5'),
-          willForceThinking: geminiModel === 'gemini-2.5-pro' // Pro不能禁用
-        });
-
-        if (geminiModel === 'gemini-2.5-pro') {
-          console.log(`[ThinkingDebug] CRITICAL: Gemini 2.5 Pro cannot disable thinking, but client did not enable thinking exposure`);
-        }
       }
 
       // 4. 转换请求
@@ -150,20 +118,6 @@ export class RequestHandler {
       const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
       const geminiRequest = transformResult.request;
 
-      // 添加thinking相关的调试日志
-      console.log(`[ThinkingDebug] Request transformation completed:`, {
-        requestId: finalRequestId,
-        geminiModel,
-        hasGenerationConfig: !!geminiRequest.generationConfig,
-        thinkingBudget: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget,
-        exposeThinkingToClient,
-        geminiRequestStructure: {
-          systemInstruction: !!geminiRequest.systemInstruction,
-          contents: geminiRequest.contents?.length || 0,
-          tools: geminiRequest.tools?.length || 0,
-          generationConfig: Object.keys(geminiRequest.generationConfig || {})
-        }
-      });
 
       // 记录警告信息
       if (transformResult.warnings && transformResult.warnings.length > 0) {
@@ -174,44 +128,14 @@ export class RequestHandler {
       const client = this.clientManager.createClient([selectedKey]);
 
       // 6. 确定端点和流式模式
-      // Flash模型thinking模式兼容性修复：强制使用流式API
-      // 当Flash模型启用thinking且有工具时，非流式API会产生MALFORMED_FUNCTION_CALL
-      let forceStream = claudeRequest.stream;
-
-      console.log(`[RequestHandler][FlashThinkingCheck] Checking force stream conditions:`, {
-        originalStream: claudeRequest.stream,
-        geminiModel,
-        isFlashModel: geminiModel.includes('flash'),
-        thinkingBudget: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget,
-        thinkingBudgetNotZero: geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget !== 0,
-        hasTools: !!(geminiRequest.tools && geminiRequest.tools.length > 0),
-        toolsLength: geminiRequest.tools?.length || 0
-      });
-
-      if (!forceStream &&
-          geminiModel.includes('flash') &&
-          geminiRequest.generationConfig?.thinkingConfig?.thinkingBudget !== 0 &&
-          geminiRequest.tools && geminiRequest.tools.length > 0) {
-
-        console.log(`[RequestHandler][FlashThinkingFix] Forcing stream mode for Flash model with thinking + tools to avoid MALFORMED_FUNCTION_CALL`);
-        forceStream = true;
-      }
-
-      const endpoint = this.getGeminiEndpoint(claudeRequest.model, forceStream);
-
-      console.log(`[RequestHandler][FlashThinkingResult] Final request configuration:`, {
-        originalStream: claudeRequest.stream,
-        forceStream,
-        endpoint,
-        willUseStream: forceStream
-      });
+      const isStreamRequest = claudeRequest.stream || false;
+      const endpoint = this.getGeminiEndpoint(claudeRequest.model, isStreamRequest);
 
       // 7. 发送请求 - 添加更好的错误处理
       try {
-        if (forceStream) {
-          // 流式响应（包括强制流式）
-
-          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true);
+        if (isStreamRequest) {
+          // 流式响应
+          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true, finalRequestId);
 
           const duration = Date.now() - startTime;
 
@@ -220,7 +144,8 @@ export class RequestHandler {
               streamResponse.stream,
               claudeRequest.model,
               streamResponse.headers,
-              exposeThinkingToClient
+              exposeThinkingToClient,
+              finalRequestId
             );
           } else {
             // 非流式错误响应 - 直接转换错误格式返回
@@ -236,7 +161,7 @@ export class RequestHandler {
           }
         } else {
           // 非流式响应
-          const response = await client.sendRequest(endpoint, geminiRequest, false);
+          const response = await client.sendRequest(endpoint, geminiRequest, false, finalRequestId);
 
           const duration = Date.now() - startTime;
 
@@ -356,7 +281,7 @@ export class RequestHandler {
 
       // 6. 发送计数请求
       const endpoint = this.getCountEndpoint(countRequest.model);
-      const response = await client.sendRequest(endpoint, geminiRequest, false);
+      const response = await client.sendRequest(endpoint, geminiRequest, false, finalRequestId);
 
       // 7. 处理响应
       if ('body' in response && response.body) {
