@@ -22,12 +22,10 @@ interface StreamBuffer {
 }
 
 /**
- * 流状态管理器 - 恢复自Node.js版本
- * 提供完整的去重和增量检测功能
+ * 流状态管理器 - 优化版本
  */
 class StreamStateManager {
   public processedFunctionCalls: Map<string, string> = new Map();
-  private processedTextHashes: Set<string> = new Set();
   private lastTextContent: string = '';
   private buffer: StreamBuffer = {
     textContent: '',
@@ -37,45 +35,33 @@ class StreamStateManager {
   };
 
   /**
-   * 处理增量文本 - 修复重复响应问题
+   * 处理增量文本
    */
   processIncrementalText(text: string): string | null {
     if (!text) return null;
 
-    // 检查是否为累积文本（包含之前的内容）
     if (this.lastTextContent && text.startsWith(this.lastTextContent)) {
-      // 提取增量部分
       const incrementalText = text.substring(this.lastTextContent.length);
-
-      if (!incrementalText) {
-        return null;
-      }
+      if (!incrementalText) return null;
 
       this.lastTextContent = text;
       this.buffer.textContent += incrementalText;
       return incrementalText;
     }
 
-    // 检查是否为完全相同的文本（避免重复）
-    if (this.lastTextContent === text) {
-      return null;
-    }
+    if (this.lastTextContent === text) return null;
 
-    // 新的文本内容或真正的增量文本
-    
     this.lastTextContent = text;
     this.buffer.textContent += text;
     return text;
   }
 
   /**
-   * 检查并处理函数调用去重
+   * 检查函数调用去重
    */
   isDuplicateFunctionCall(functionCall: { name: string; args: any }): boolean {
     const signature = this.generateFunctionSignature(functionCall);
-    const isDuplicate = this.processedFunctionCalls.has(signature);
-    
-    return isDuplicate;
+    return this.processedFunctionCalls.has(signature);
   }
 
   /**
@@ -126,16 +112,10 @@ class StreamStateManager {
     return Math.abs(hash).toString(36).substring(0, 8);
   }
 
-  /**
-   * 获取缓冲区状态
-   */
   getBuffer(): StreamBuffer {
     return this.buffer;
   }
 
-  /**
-   * 重置文本追踪
-   */
   resetTextTracking(): void {
     this.lastTextContent = '';
   }
@@ -152,54 +132,20 @@ export class StreamTransformer {
   }
 
   /**
-   * 生成工具使用ID
-   */
-  private static generateToolUseId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substr(2, 9);
-    return `toolu_${timestamp}_${random}`;
-  }
-
-  /**
-   * 生成函数调用的唯一签名
-   */
-  private static generateFunctionSignature(functionCall: { name: string; args: any }): string {
-    const argsStr = JSON.stringify(functionCall.args || {});
-    const content = `${functionCall.name}:${argsStr}`;
-    return this.simpleHash(content);
-  }
-
-  /**
-   * 简单哈希函数
-   */
-  private static simpleHash(content: string): string {
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash).toString(36).substring(0, 8);
-  }
-
-  /**
-   * 创建Gemini到Claude的流转换器 - 增强版本
+   * 创建Gemini到Claude的流转换器 - 优化版本
    */
   static createClaudeStreamTransformer(claudeModel: string, exposeThinkingToClient: boolean = false): TransformStream<Uint8Array, Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let buffer = '';
     let messageStarted = false;
-    let streamFinished = false; // 防止重复结束事件
-    let currentContent: ClaudeContentBlock[] = [];
+    let streamFinished = false;
     let currentTextContent = '';
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const messageId = this.generateClaudeMessageId();
-    let pingInterval: any = null;
     let currentBlockIndex = 0;
 
-    // 使用增强的状态管理器 - 恢复自Node.js版本
     const stateManager = new StreamStateManager();
 
     // 转换停止原因的辅助函数
@@ -219,12 +165,7 @@ export class StreamTransformer {
           return { stop_reason: 'tool_use' };
         case 'SAFETY':
         case 'RECITATION':
-          // 处理安全过滤和内容重复等情况
-          
-          return { stop_reason: 'end_turn' };
         case 'OTHER':
-          // Gemini 的 OTHER 状态，可能包含 isNewTopic 等特殊终止原因
-          
           return { stop_reason: 'end_turn' };
         default:
           return { stop_reason: 'end_turn' };
@@ -233,11 +174,7 @@ export class StreamTransformer {
 
     return new TransformStream({
       async start(controller) {
-        // 发送初始ping以保持连接活跃
-        pingInterval = setInterval(() => {
-          const pingEvent: ClaudeStreamEvent = { type: 'ping' };
-          controller.enqueue(encoder.encode(`event: ping\ndata: ${JSON.stringify(pingEvent)}\n\n`));
-        }, 15000); // 每15秒发送一次ping
+        // 移除ping机制以减少开销
       },
 
       async transform(chunk, controller) {
@@ -247,34 +184,24 @@ export class StreamTransformer {
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            // 跳过空行
             if (line.trim() === '') continue;
 
-            // 增强的SSE格式处理
+            // 快速检查SSE格式
             let data: string | null = null;
-
             if (line.startsWith('data: ')) {
               data = line.slice(6).trim();
             } else if (line.startsWith('data:')) {
               data = line.slice(5).trim();
-            } else if (line.startsWith('{') && line.endsWith('}')) {
-              // 只有当行以 { 开始并以 } 结束时才尝试解析为 JSON
+            } else if (line.startsWith('{')) {
               data = line.trim();
             } else {
               continue;
             }
 
-            if (!data || data === '[DONE]' || data === '') {
-              continue;
-            }
+            if (!data || data === '[DONE]') continue;
 
             try {
               const geminiChunk = JSON.parse(data) as GeminiStreamResponse;
-
-              // 详细调试：记录Gemini原始返回内容
-              if (geminiChunk.candidates?.[0]?.content?.parts) {
-
-              }
 
               // 首次消息，发送message_start
               if (!messageStarted) {
@@ -298,293 +225,114 @@ export class StreamTransformer {
                   } as ClaudeResponse
                 };
 
-                const eventData = `event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`;
-                controller.enqueue(encoder.encode(eventData));
+                controller.enqueue(encoder.encode(`event: message_start\\ndata: ${JSON.stringify(messageStart)}\\n\\n`));
 
                 // 发送content_block_start
                 const blockStart: ClaudeStreamEvent = {
                   type: 'content_block_start',
                   index: 0,
-                  content_block: {
-                    type: 'text',
-                    text: ''
-                  } as ClaudeTextBlock
+                  content_block: { type: 'text', text: '' } as ClaudeTextBlock
                 };
 
-                controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`));
-                currentContent.push({ type: 'text', text: '' });
+                controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(blockStart)}\\n\\n`));
               }
 
               // 处理文本内容和工具调用
               if (geminiChunk.candidates?.[0]?.content?.parts) {
                 for (const part of geminiChunk.candidates[0].content.parts) {
-                  if ('text' in part && part.text && !('thought' in part) && (part as any).thought !== true) {
-                    // 只处理非思考的普通文本内容
-
-                    // 检测 isNewTopic 元数据
-                    // 这是 Claude CLI 的会话管理信息，应该保留并传递给客户端
-                    if (part.text.includes('isNewTopic') && part.text.includes('title')) {
-                      try {
-                        // 尝试解析，去除可能的 markdown 代码块标记
-                        const cleanedText = part.text.replace(/^```json\s*|\s*```$/gm, '').trim();
-                        const parsed = JSON.parse(cleanedText);
-
-                        if ('isNewTopic' in parsed && typeof parsed.isNewTopic === 'boolean') {
-
-                          // 继续处理，让这个内容作为响应的一部分发送给客户端
-                          // Claude CLI 会解析这个 JSON 来管理会话
-                        }
-                      } catch (e) {
-                        // 不是有效的 JSON，可能只是包含这些词的正常文本
-                        
-                      }
-                    }
-
-                    // 使用状态管理器进行增量检测 - 恢复自Node.js版本
+                  // 处理文本内容
+                  if ('text' in part && part.text && !('thought' in part)) {
                     const incrementalText = stateManager.processIncrementalText(part.text);
-                    if (!incrementalText) {
-                      continue; // 跳过无增量的重复内容
-                    }
-
-                    // 发送文本增量
-                    const delta: ClaudeStreamEvent = {
-                      type: 'content_block_delta',
-                      index: 0,
-                      delta: {
-                        type: 'text_delta',
-                        text: incrementalText
-                      }
-                    };
-
-                    controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
-                    currentTextContent += incrementalText;
-                  } else if (('thought' in part && 'text' in part) || ((part as any).thought === true && 'text' in part)) {
-                    // 正确处理Gemini思考格式
-                    const isThoughtContent = (part as any).thought === true || ('thought' in part && (part as any).thought);
-                    const textContent = 'text' in part ? (part as any).text : '';
-
-                    // 如果客户端没有启用thinking，应该完全过滤掉标记为thought的内容
-                    if (!exposeThinkingToClient && isThoughtContent) {
-                      // 不暴露 thinking 时，完全过滤掉思考内容
-                      // 重置状态管理器，确保后续正常内容不受影响
-                      stateManager.resetTextTracking();
-                      // 跳过这个thinking内容，继续处理下一个part
-                      continue;
-                    } else if (exposeThinkingToClient && isThoughtContent) {
-                      // 客户端启用thinking，发送thinking块
-                      const thinkingBlockStart: ClaudeStreamEvent = {
-                        type: 'content_block_start',
-                        index: currentBlockIndex,
-                        content_block: {
-                          type: 'thinking',
-                          thinking: '',
-                          signature: ThinkingTransformer.generateThinkingSignature(textContent)
-                        } as ClaudeThinkingBlock
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
-
-                      const thinkingDelta: ClaudeStreamEvent = {
+                    if (incrementalText) {
+                      const delta: ClaudeStreamEvent = {
                         type: 'content_block_delta',
-                        index: currentBlockIndex,
-                        delta: {
-                          type: 'thinking_delta',
-                          thinking: textContent
-                        }
+                        index: 0,
+                        delta: { type: 'text_delta', text: incrementalText }
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`));
-
-                      const thinkingBlockStop: ClaudeStreamEvent = {
-                        type: 'content_block_stop',
-                        index: currentBlockIndex
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
-
-                      currentBlockIndex++;
+                      controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(delta)}\\n\\n`));
+                      currentTextContent += incrementalText;
                     }
+                  }
+                  // 处理thinking内容
+                  else if (('thought' in part && 'text' in part) && exposeThinkingToClient) {
+                    const thinkingText = (part as any).text;
+                    const thinkingBlockStart: ClaudeStreamEvent = {
+                      type: 'content_block_start',
+                      index: currentBlockIndex,
+                      content_block: {
+                        type: 'thinking',
+                        thinking: '',
+                        signature: ThinkingTransformer.generateThinkingSignature(thinkingText)
+                      } as ClaudeThinkingBlock
+                    };
+                    controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(thinkingBlockStart)}\\n\\n`));
 
-                    continue; // 思考内容处理完毕
-                  } else if ('functionCall' in part && part.functionCall) {
-                    // 详细调试：记录函数调用原始数据
+                    const thinkingDelta: ClaudeStreamEvent = {
+                      type: 'content_block_delta',
+                      index: currentBlockIndex,
+                      delta: { type: 'thinking_delta', thinking: thinkingText }
+                    };
+                    controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(thinkingDelta)}\\n\\n`));
 
-                    // 使用状态管理器进行函数调用去重
-                    const functionCall = part.functionCall;
-                    const signature = stateManager.generateFunctionSignature(functionCall);
+                    const thinkingBlockStop: ClaudeStreamEvent = {
+                      type: 'content_block_stop',
+                      index: currentBlockIndex
+                    };
+                    controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
+                    currentBlockIndex++;
+                  }
+                  // 处理工具调用
+                  else if ('functionCall' in part && part.functionCall) {
+                    if (stateManager.isDuplicateFunctionCall(part.functionCall)) continue;
 
-                    // 检查本地状态管理器
-                    let shouldSkip = stateManager.isDuplicateFunctionCall(functionCall);
-
-                    // 仅使用本地状态管理器进行去重
-
-                    if (shouldSkip) {
-                      
-                      continue;
-                    }
-
-                    // 记录到本地状态管理器
-                    const toolUseId = stateManager.recordFunctionCall(functionCall);
-
-                    // 处理args - 可能是字符串或对象
+                    const toolUseId = stateManager.recordFunctionCall(part.functionCall);
                     let args = part.functionCall.args || {};
 
                     if (typeof args === 'string') {
-                      
-                      try {
-                        args = JSON.parse(args);
-                        
-                      } catch (e) {
-                        
-                        args = {};
-                      }
-                    } else {
-                      
+                      try { args = JSON.parse(args); }
+                      catch { args = {}; }
                     }
 
-                    // TodoWrite 工具不需要特殊处理 - Claude Code 客户端会自行处理显示
-                    // 只需要正常传递 tool_use 内容块即可
-                    if (functionCall.name === 'TodoWrite') {
-                      
-                    }
-
-                    // 先结束当前文本块（如果有）
+                    // 结束当前文本块
                     if (currentBlockIndex === 0) {
-                      // 无论是否有文本内容，都需要先结束文本块再开始工具块
-                      const blockStop: ClaudeStreamEvent = {
-                        type: 'content_block_stop',
-                        index: 0
-                      };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
+                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\\n\\n`));
                       currentBlockIndex++;
                     }
 
-                    // 创建工具使用块
-                    const toolUse: ClaudeContentBlock = {
+                    // 发送工具使用事件
+                    const toolUse = {
                       type: 'tool_use',
                       id: toolUseId,
                       name: part.functionCall.name,
                       input: args
                     };
 
-                    // 发送工具使用开始事件
-                    const toolBlockStart: ClaudeStreamEvent = {
-                      type: 'content_block_start',
-                      index: currentBlockIndex,
-                      content_block: toolUse
-                    };
-                    controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(toolBlockStart)}\n\n`));
-
-                    // 对于 TodoWrite 工具，我们需要确保参数被正确传递
-                    // 发送工具参数增量事件 - 这是关键！Claude CLI需要这个来获取参数
-                    const inputDelta: ClaudeStreamEvent = {
-                      type: 'content_block_delta',
-                      index: currentBlockIndex,
-                      delta: {
-                        type: 'input_json_delta',
-                        partial_json: JSON.stringify(args)
-                      }
-                    };
-                    controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(inputDelta)}\n\n`));
-
-                    // 发送工具使用停止事件
-                    const toolBlockStop: ClaudeStreamEvent = {
-                      type: 'content_block_stop',
-                      index: currentBlockIndex
-                    };
-                    controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(toolBlockStop)}\n\n`));
-
-                    currentContent.push(toolUse);
+                    controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify({type: 'content_block_start', index: currentBlockIndex, content_block: toolUse})}\\n\\n`));
+                    controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify({type: 'content_block_delta', index: currentBlockIndex, delta: {type: 'input_json_delta', partial_json: JSON.stringify(args)}})}\\n\\n`));
+                    controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: currentBlockIndex})}\\n\\n`));
                     currentBlockIndex++;
-                  } else if ('functionResponse' in part && part.functionResponse) {
-                    // 处理函数响应（通常不会在流式中出现，但以防万一）
-                    const streamBuffer = stateManager.getBuffer();
-                    const matchingCall = streamBuffer.functionCalls.find(
-                      call => call.name === part.functionResponse.name
-                    );
-                    const toolUseId = matchingCall?.id || stateManager['generateToolUseId']();
-
-                    streamBuffer.functionResponses.push({
-                      name: part.functionResponse.name,
-                      response: part.functionResponse.response,
-                      callId: toolUseId
-                    });
                   }
                 }
-              }
-
-              // 检查是否有 isNewTopic 或其他特殊终止
-              if (geminiChunk.candidates?.[0]?.finishReason === 'OTHER' ||
-                  geminiChunk.candidates?.[0]?.finishReason === 'BLOCKED_PROMPT' ||
-                  (geminiChunk.promptFeedback?.blockReason)) {
-                
               }
 
               // 检查是否完成
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
-                streamFinished = true; // 标记流已完成，防止重复处理
+                streamFinished = true;
 
-                // 如果没有发送过任何内容
-                if (!currentTextContent && currentBlockIndex === 0) {
-                  
+                // 发送结束事件
+                if (currentTextContent || currentBlockIndex === 0) {
+                  const blockIndex = currentBlockIndex > 0 ? currentBlockIndex - 1 : 0;
+                  controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: blockIndex})}\\n\\n`));
                 }
 
-                // 发送content_block_stop（处理索引计算）
-                if (currentTextContent) {
-                  // 如果有文本内容，关闭最后一个文本块
-                  const textBlockIndex = currentBlockIndex > 0 ? currentBlockIndex : 0;
-                  const blockStop: ClaudeStreamEvent = {
-                    type: 'content_block_stop',
-                    index: textBlockIndex
-                  };
-                  controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
-                  
-                } else if (currentBlockIndex > 0) {
-                  // 没有文本内容但有其他块（如thinking块），关闭最后一个块
-                  const blockStop: ClaudeStreamEvent = {
-                    type: 'content_block_stop',
-                    index: currentBlockIndex - 1
-                  };
-                  controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
-                  
-                }
-
-                // 更新token统计 - 包含思维令牌和缓存令牌信息
-                totalOutputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || currentTextContent.length / 4; // 估算
-                const thinkingTokens = geminiChunk.usageMetadata?.thoughtsTokenCount;
-                const cachedTokens = geminiChunk.usageMetadata?.cachedContentTokenCount;
-
-                // 记录完整的令牌使用情况（仅在调试模式下)
-
-                // 发送message_delta
+                totalOutputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || Math.floor(currentTextContent.length / 4);
                 const stopInfo = transformStopReason(geminiChunk.candidates[0].finishReason);
-                const messageDelta: ClaudeStreamEvent = {
-                  type: 'message_delta',
-                  delta: {
-                    stop_reason: stopInfo.stop_reason,
-                    stop_sequence: stopInfo.stop_sequence
-                  },
-                  usage: {
-                    output_tokens: totalOutputTokens
-                  }
-                };
-                controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`));
 
-                // 发送message_stop
-                const stopEvent: ClaudeStreamEvent = {
-                  type: 'message_stop'
-                };
-                controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`));
+                controller.enqueue(encoder.encode(`event: message_delta\\ndata: ${JSON.stringify({type: 'message_delta', delta: stopInfo, usage: {output_tokens: totalOutputTokens}})}\\n\\n`));
+                controller.enqueue(encoder.encode(`event: message_stop\\ndata: ${JSON.stringify({type: 'message_stop'})}\\n\\n`));
               }
             } catch (e) {
-
-              // 检查是否是 isNewTopic 相关的特殊响应
-              if (data && typeof data === 'string' && data.includes('isNewTopic')) {
-
-                // 不要在这里发送结束事件，因为这可能会导致重复的结束事件
-                // 相反，让正常的流程处理结束
-                // 只需要记录这个情况，继续处理下一个数据块
-                continue;
-              }
-
-              // 对于其他解析错误，继续处理下一个数据块
+              // 简化错误处理
               continue;
             }
           }
@@ -596,120 +344,16 @@ export class StreamTransformer {
               message: error instanceof Error ? error.message : 'Stream processing error'
             }
           };
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`));
+          controller.enqueue(encoder.encode(`event: error\\ndata: ${JSON.stringify(errorEvent)}\\n\\n`));
         }
       },
 
       flush(controller) {
-        // 清理ping interval
-        if (pingInterval) {
-          clearInterval(pingInterval);
-        }
-
-        // 处理剩余的缓冲数据 - 修复重复响应
-        if (buffer.trim()) {
-          try {
-            let data: string | null = null;
-
-            if (buffer.startsWith('data: ')) {
-              data = buffer.slice(6).trim();
-            } else if (buffer.startsWith('data:')) {
-              data = buffer.slice(5).trim();
-            } else if (buffer.includes('{')) {
-              data = buffer.trim();
-            }
-
-            if (data && data !== '[DONE]') {
-              try {
-                const geminiChunk = JSON.parse(data) as GeminiStreamResponse;
-                // 处理最后的数据块 - 使用状态管理器确保无重复
-                if (geminiChunk.candidates?.[0]?.content?.parts) {
-                  for (const part of geminiChunk.candidates[0].content.parts) {
-                    if ('text' in part && part.text) {
-                      // 使用状态管理器检查重复
-                      const incrementalText = stateManager.processIncrementalText(part.text);
-                      if (incrementalText) {
-                        const delta: ClaudeStreamEvent = {
-                          type: 'content_block_delta',
-                          index: 0,
-                          delta: {
-                            type: 'text_delta',
-                            text: incrementalText
-                          }
-                        };
-                        controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`));
-                      }
-                    } else if ('thought' in part && (part as any).thought) {
-                      // 正确处理思考内容 - 根据配置决定是否暴露
-                      if (exposeThinkingToClient) {
-
-                        // 在flush阶段简化处理，直接作为完整thinking block
-                        const thinkingBlockStart: ClaudeStreamEvent = {
-                          type: 'content_block_start',
-                          index: 0,
-                          content_block: {
-                            type: 'thinking',
-                            thinking: (part as any).thought,
-                            signature: ThinkingTransformer.generateThinkingSignature((part as any).thought)
-                          } as ClaudeThinkingBlock
-                        };
-                        controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(thinkingBlockStart)}\n\n`));
-
-                        const thinkingBlockStop: ClaudeStreamEvent = {
-                          type: 'content_block_stop',
-                          index: 0
-                        };
-                        controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(thinkingBlockStop)}\n\n`));
-                      } else {
-                        
-                      }
-                      continue;
-                    }
-                  }
-                }
-              } catch (e) {
-
-                // 检查是否是 isNewTopic 相关的响应
-                if (data && typeof data === 'string' && data.includes('isNewTopic')) {
-                  
-                }
-              }
-            }
-          } catch (e) {
-
-            // 检查缓冲区是否包含 isNewTopic
-            if (buffer && buffer.includes('isNewTopic')) {
-              
-            }
-          }
-        }
-
-        // 如果消息已开始但未正常结束，发送结束事件（仅在需要时）
+        // 简化flush处理
         if (messageStarted && !streamFinished) {
-          // 发送content_block_stop
-          const blockStop: ClaudeStreamEvent = {
-            type: 'content_block_stop',
-            index: 0
-          };
-          controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`));
-
-          // 发送message_delta
-          const messageDelta: ClaudeStreamEvent = {
-            type: 'message_delta',
-            delta: {
-              stop_reason: 'end_turn'
-            },
-            usage: {
-              output_tokens: totalOutputTokens || currentTextContent.length / 4
-            }
-          };
-          controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`));
-
-          // 发送message_stop
-          const stopEvent: ClaudeStreamEvent = {
-            type: 'message_stop'
-          };
-          controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`));
+          controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\\n\\n`));
+          controller.enqueue(encoder.encode(`event: message_delta\\ndata: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}\\n\\n`));
+          controller.enqueue(encoder.encode(`event: message_stop\\ndata: ${JSON.stringify({type: 'message_stop'})}\\n\\n`));
         }
       }
     });
@@ -723,7 +367,6 @@ export class StreamTransformer {
     claudeModel: string,
     exposeThinkingToClient: boolean = false
   ): ReadableStream {
-    // 直接返回转换后的流
     return geminiStream.pipeThrough(this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient));
   }
 
@@ -736,7 +379,6 @@ export class StreamTransformer {
 
     return geminiStream.pipeThrough(new TransformStream({
       transform(chunk, controller) {
-        const text = decoder.decode(chunk, { stream: true });
         controller.enqueue(chunk);
       }
     }));

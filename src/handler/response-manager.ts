@@ -170,7 +170,7 @@ export class ResponseManager {
     // 保持大部分状态码不变，仅调整特殊情况
     switch (geminiStatus) {
       case 503: // Service Unavailable
-        return 502; // Bad Gateway (表示上游服务问题)
+        return 503; // 保持503，让客户端知道是临时性问题
       case 504: // Gateway Timeout
         return 504; // 保持不变
       default:

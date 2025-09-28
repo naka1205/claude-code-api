@@ -60,105 +60,18 @@ export class ResponseTransformer {
         throw new Error('No response candidate available');
       }
 
-      // 记录关键信息：终止原因和token使用
-      Logger.info('ResponseTransformer', 'Response summary', {
-        finishReason: candidate.finishReason,
-        partsCount: candidate.content?.parts?.length || 0,
-        inputTokens: geminiResponse.usageMetadata?.promptTokenCount,
-        outputTokens: geminiResponse.usageMetadata?.candidatesTokenCount,
-        thinkingTokens: geminiResponse.usageMetadata?.thoughtsTokenCount, // 思维推理令牌 (Gemini 2.5+)
-        cachedTokens: geminiResponse.usageMetadata?.cachedContentTokenCount, // 缓存内容令牌
-        totalTokens: geminiResponse.usageMetadata?.totalTokenCount
-      });
-
-      // 处理MALFORMED_FUNCTION_CALL错误
-      if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
-        Logger.warn('ResponseTransformer', 'MALFORMED_FUNCTION_CALL detected in Gemini response', {
-          model: claudeModel,
-          hasContent: !!candidate.content,
-          hasParts: !!(candidate.content && candidate.content.parts),
-          partsCount: candidate.content?.parts?.length || 0
+      // 简化日志记录，仅在debug模式下输出详细信息
+      if (process.env.DEBUG_TRANSFORM === 'true') {
+        Logger.debug('ResponseTransformer', 'Response summary', {
+          finishReason: candidate.finishReason,
+          partsCount: candidate.content?.parts?.length || 0,
+          totalTokens: geminiResponse.usageMetadata?.totalTokenCount
         });
+      }
 
-        // MALFORMED_FUNCTION_CALL通常是因为模型在文本中包含了工具调用模板
-        // 我们需要解析文本内容，提取工具调用并重构响应
-
-        // 尝试从响应中提取工具调用模板（检查文本和thinking内容）
-        let textContent = '';
-        let thinkingContent = '';
-
-        if (candidate.content && candidate.content.parts) {
-          for (const part of candidate.content.parts) {
-            if ('text' in part && part.text) {
-              textContent += part.text;
-            }
-            // 检查thinking内容
-            if ((part as any).thought) {
-              thinkingContent += (part as any).thought;
-            }
-          }
-        }
-
-        // 合并所有内容进行模板解析
-        const allContent = textContent + '\n' + thinkingContent;
-
-        if (allContent.trim()) {
-          // 使用ThinkingTransformer的模板解析功能
-          const extractedToolCalls = ThinkingTransformer.extractToolCallsFromTemplate(allContent);
-
-          if (extractedToolCalls && extractedToolCalls.length > 0) {
-            Logger.info('ResponseTransformer', 'Successfully extracted tool calls from MALFORMED_FUNCTION_CALL response', {
-              toolCallsCount: extractedToolCalls.length,
-              toolNames: extractedToolCalls.map(call => call.name),
-              foundInText: !!ThinkingTransformer.extractToolCallsFromTemplate(textContent)?.length,
-              foundInThinking: !!ThinkingTransformer.extractToolCallsFromTemplate(thinkingContent)?.length
-            });
-
-            // 清理文本内容（移除模板标记）
-            const cleanedText = ThinkingTransformer.cleanResponseText(textContent);
-            const cleanedThinking = ThinkingTransformer.cleanResponseText(thinkingContent);
-
-            // 重新构建parts数组
-            const newParts: any[] = [];
-
-            // 保留thinking内容（如果有）
-            if (cleanedThinking.trim()) {
-              newParts.push({
-                thought: cleanedThinking,
-                thoughtTokenCount: Math.floor(cleanedThinking.length / 4) // 估算token数
-              });
-            }
-
-            // 如果有清理后的文本内容，添加为文本部分
-            if (cleanedText.trim()) {
-              newParts.push({ text: cleanedText });
-            }
-
-            // 将提取的工具调用转换为Gemini格式的函数调用
-            for (const toolCall of extractedToolCalls) {
-              newParts.push({
-                functionCall: {
-                  name: toolCall.name,
-                  args: toolCall.arguments || {}
-                }
-              });
-            }
-
-            // 更新candidate内容
-            candidate = {
-              ...candidate,
-              content: {
-                ...candidate.content,
-                parts: newParts
-              },
-              finishReason: 'STOP' // 修改finish reason为正常结束
-            };
-
-            Logger.info('ResponseTransformer', 'Successfully reconstructed response with extracted tool calls');
-          } else {
-            Logger.warn('ResponseTransformer', 'Could not extract tool calls from MALFORMED_FUNCTION_CALL response');
-          }
-        }
+      // 优化MALFORMED_FUNCTION_CALL处理 - 简化逻辑
+      if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
+        candidate = this.handleMalformedFunctionCall(candidate);
       }
 
       // 转换内容块
@@ -197,10 +110,9 @@ export class ResponseTransformer {
         usage
       };
 
-      // 验证输出质量 - 恢复自Node.js版本
-      if (transformOptions.validateOutput) {
-        const qualityScore = this.calculateResponseQuality(claudeResponse);
-        // 低质量告警日志已移除
+      // 仅在debug模式下进行质量验证
+      if (transformOptions.validateOutput && process.env.DEBUG_QUALITY === 'true') {
+        this.calculateResponseQuality(claudeResponse);
       }
 
       return claudeResponse;
@@ -265,86 +177,93 @@ export class ResponseTransformer {
   }
 
   /**
+   * 优化的MALFORMED_FUNCTION_CALL处理
+   */
+  private static handleMalformedFunctionCall(candidate: GeminiCandidate): GeminiCandidate {
+    if (!candidate.content?.parts) return candidate;
+
+    const textContent = candidate.content.parts
+      .filter(p => 'text' in p && p.text)
+      .map(p => (p as any).text)
+      .join('\n');
+
+    if (!textContent.trim()) return candidate;
+
+    const extractedToolCalls = ThinkingTransformer.extractToolCallsFromTemplate(textContent);
+
+    if (!extractedToolCalls?.length) return candidate;
+
+    const cleanedText = ThinkingTransformer.cleanResponseText(textContent);
+    const newParts: any[] = [];
+
+    if (cleanedText.trim()) {
+      newParts.push({ text: cleanedText });
+    }
+
+    extractedToolCalls.forEach(toolCall => {
+      newParts.push({
+        functionCall: {
+          name: toolCall.name,
+          args: toolCall.arguments || {}
+        }
+      });
+    });
+
+    return {
+      ...candidate,
+      content: { ...candidate.content, parts: newParts },
+      finishReason: 'STOP'
+    };
+  }
+
+  /**
    * 转换内容块
    */
   private static async transformContentBlocks(
     candidate: GeminiCandidate,
     exposeThinkingToClient: boolean = false
   ): Promise<ClaudeContentBlock[]> {
-    Logger.debug('ResponseTransformer', 'Transforming content blocks');
-    Logger.debug('ResponseTransformer', `Candidate has parts: ${!!candidate.content?.parts}`);
-
-    // 检查是否有内容
-    if (!candidate.content) {
-      Logger.warn('ResponseTransformer', 'No candidate content');
-      return [{ type: 'text', text: '' }];
-    }
-
-    // 如果没有parts但有其他thinking相关字段，尝试处理
-    if (!candidate.content.parts || candidate.content.parts.length === 0) {
-      Logger.warn('ResponseTransformer', 'No content parts found');
-
+    // 快速检查是否有内容
+    if (!candidate.content?.parts?.length) {
       // 检查是否在candidate级别有思考内容
-      if ((candidate as any).content?.text || (candidate as any).thinking) {
-        const thinkingText = (candidate as any).content?.text || (candidate as any).thinking;
-        if (thinkingText && exposeThinkingToClient) {
-          const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(thinkingText);
-          const blocks: ClaudeContentBlock[] = [];
+      const fallbackContent = (candidate as any).content?.text || (candidate as any).thinking;
+      if (fallbackContent && exposeThinkingToClient) {
+        const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(fallbackContent);
+        const blocks: ClaudeContentBlock[] = [];
 
-          if (thinking) {
-            blocks.push({
-              type: 'thinking',
-              thinking: thinking,
-              signature: ThinkingTransformer.generateThinkingSignature(thinking)
-            } as ClaudeThinkingBlock);
-          }
-
-          if (response) {
-            blocks.push({ type: 'text', text: response });
-          }
-
-          return blocks.length > 0 ? blocks : [{ type: 'text', text: thinkingText }];
+        if (thinking) {
+          blocks.push({
+            type: 'thinking',
+            thinking: thinking,
+            signature: ThinkingTransformer.generateThinkingSignature(thinking)
+          } as ClaudeThinkingBlock);
         }
 
-        return [{ type: 'text', text: thinkingText || '' }];
+        if (response) {
+          blocks.push({ type: 'text', text: response });
+        }
+
+        return blocks.length > 0 ? blocks : [{ type: 'text', text: fallbackContent }];
       }
 
-      return [{ type: 'text', text: '' }];
+      return [{ type: 'text', text: fallbackContent || '' }];
     }
 
-    Logger.info('ResponseTransformer', `Parts count: ${candidate.content.parts.length}`);
-    Logger.debug('ResponseTransformer', 'Parts details',
-      candidate.content.parts ? candidate.content.parts.map((p: any) => ({
-        hasText: 'text' in p,
-        hasThought: p.thought,
-        hasFunctionCall: 'functionCall' in p,
-        hasFunctionResponse: 'functionResponse' in p,
-        textPreview: p.text?.substring(0, 50)
-      })) : []
-    );
-
-    // 使用ContentTransformer处理，它会正确处理thinking/非thinking parts的分离
+    // 使用ContentTransformer处理内容块
     let result = await ContentTransformer.processToolCallsAndResults(
       candidate.content.parts,
       exposeThinkingToClient
     );
 
-    // 检查是否需要处理工具调用模板（针对文本响应中包含模板的情况）
+    // 处理工具调用模板
     result = this.processToolCallTemplate(result);
 
-    Logger.info('ResponseTransformer', `Transformed blocks count: ${result.length}`);
-
-    // 关键优化：如果结果为空或只包含空文本，提供fallback
+    // Fallback处理：如果结果为空且有thinking内容但客户端未启用
     if (result.length === 0 || (result.length === 1 && result[0].type === 'text' && !(result[0] as any).text?.trim())) {
-      Logger.warn('ResponseTransformer', 'Empty result after transformation, checking for thinking content fallback');
-
-      // 检查原始parts中是否有thinking内容但客户端未启用
       const hasThinkingParts = candidate.content.parts.some((p: any) => 'thought' in p && p.thought);
       const hasRegularParts = candidate.content.parts.some((p: any) => 'text' in p && !('thought' in p));
 
       if (hasThinkingParts && !hasRegularParts && !exposeThinkingToClient) {
-        Logger.warn('ResponseTransformer', 'Detected thinking-only response but client did not enable thinking exposure');
-        // 提供一个友好的fallback消息
         return [{
           type: 'text',
           text: '我已经完成了分析，但由于当前配置，无法显示详细的推理过程。如需查看完整的分析思路，请启用thinking模式。'

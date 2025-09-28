@@ -4,7 +4,6 @@
  */
 
 import { StreamTransformer } from '../transformers/stream-transformer';
-import { DataSaver } from '../utils/data-saver';
  
 
 export class StreamManager {
@@ -21,14 +20,11 @@ export class StreamManager {
     try {
       
 
-      // 创建转换后的流，移除KV和会话ID参数
+      // 创建转换后的流，简化处理
       const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient);
 
-      // 如果有requestId，添加数据保存的流处理
-      const finalStream = requestId ? this.addDataSavingToStream(transformedStream, requestId, claudeModel) : transformedStream;
-
-      // 添加一个额外的转换器来确保正确的SSE格式
-      const sseStream = this.ensureSSEFormat(finalStream);
+      // 简化SSE格式确保
+      const sseStream = this.ensureSSEFormat(transformedStream);
 
       // 返回SSE响应
       return new Response(sseStream, {
@@ -41,9 +37,8 @@ export class StreamManager {
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
           'Access-Control-Allow-Credentials': 'true',
-          'X-Accel-Buffering': 'no', // 禁用Nginx缓冲
-          'X-Content-Type-Options': 'nosniff',
-          'Transfer-Encoding': 'chunked'
+          'X-Accel-Buffering': 'no',
+          'X-Content-Type-Options': 'nosniff'
         }
       });
 
@@ -63,23 +58,18 @@ export class StreamManager {
   }
 
   /**
-   * 确保SSE格式正确
+   * 简化的SSE格式确保
    */
   private ensureSSEFormat(stream: ReadableStream): ReadableStream {
     const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    let buffer = '';
 
     return stream.pipeThrough(new TransformStream({
       transform(chunk, controller) {
-        // 直接传递，因为StreamTransformer已经处理了格式
         controller.enqueue(chunk);
       },
 
       flush(controller) {
-        // 确保流正确结束
-        const endMarker = encoder.encode('\n\n');
-        controller.enqueue(endMarker);
+        controller.enqueue(encoder.encode('\n\n'));
       }
     }));
   }
@@ -208,64 +198,4 @@ export class StreamManager {
     });
   }
 
-  /**
-   * 添加数据保存到流处理pipeline中
-   */
-  private addDataSavingToStream(stream: ReadableStream, requestId: string, claudeModel: string): ReadableStream {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-
-    return new ReadableStream({
-      async start(controller) {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-
-            if (done) {
-              break;
-            }
-
-            // 解析流数据
-            const chunk = decoder.decode(value, { stream: true });
-
-            // 尝试解析SSE数据来提取实际内容
-            try {
-              // SSE格式：event: xxx\ndata: {...}\n\n
-              const lines = chunk.split('\n');
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const dataStr = line.substring(6);
-                  if (dataStr.trim() && !dataStr.includes('[DONE]')) {
-                    try {
-                      const eventData = JSON.parse(dataStr);
-                      // 累计保存流式响应数据到Claude响应文件
-                      DataSaver.appendStreamResponse(requestId, 'claude', eventData);
-                      // 同时也保存到Gemini响应文件（因为这是转换后的数据）
-                      DataSaver.appendStreamResponse(requestId, 'gemini', {
-                        original: eventData,
-                        claudeModel,
-                        timestamp: new Date().toISOString()
-                      });
-                    } catch (parseError) {
-                      // 忽略解析错误，继续处理
-                    }
-                  }
-                }
-              }
-            } catch (error) {
-              // 忽略解析错误，继续传输数据
-            }
-
-            // 继续传输原始数据
-            controller.enqueue(value);
-          }
-        } catch (error) {
-          controller.error(error);
-        } finally {
-          reader.releaseLock();
-          controller.close();
-        }
-      }
-    });
-  }
 }
