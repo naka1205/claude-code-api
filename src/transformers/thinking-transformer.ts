@@ -82,12 +82,13 @@ export class ThinkingTransformer {
     geminiModel: string,
     hasTools: boolean = false
   ): boolean {
-    // 只对 FLASH 模型 + thinking + tools + 非流式 的组合使用模板
+    // 禁用非流式请求的模板模式，因为它会导致 MALFORMED_FUNCTION_CALL
+    // 只对 FLASH 模型 + thinking + tools + 流式 的组合使用模板
     const isFlashModel = geminiModel.includes('2.5-flash');
     const hasThinking = claudeRequest.thinking?.type === 'enabled';
-    const isNonStream = !claudeRequest.stream;
+    const isStream = claudeRequest.stream === true;
 
-    return isFlashModel && hasThinking && hasTools && isNonStream;
+    return isFlashModel && hasThinking && hasTools && isStream;
   }
 
   /**
@@ -191,20 +192,32 @@ export class ThinkingTransformer {
       return '';
     }
 
-    const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];  // 过滤掉这些复杂工具
+    const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];
     const coreTools = claudeRequest.tools
       .filter(tool => !excludedTools.includes(tool.name))
       .map(tool => tool.name);
     const availableTools = coreTools.join(', ');
 
     return `
-CRITICAL: Use ONLY function calls via the available tools. When calling tools:
+CRITICAL RESPONSE FORMAT REQUIREMENTS:
 
-1. Use the standard function_call format provided by Gemini
-2. Call tools one at a time when possible
-3. Available core tools: ${availableTools}
+1. ALWAYS provide a conversational response text FIRST before calling any tools
+2. Your response must follow this order:
+   a) Normal conversational text explaining your approach or findings
+   b) Then, if needed, call tools using the standard function_call format
 
-Do NOT use any template formats like <TOOL_CALLS> or JSON arrays.
+3. When calling tools:
+   - Use the standard function_call format provided by Gemini
+   - Call tools one at a time when possible
+   - Available core tools: ${availableTools}
+
+4. Do NOT use template formats like <TOOL_CALLS> or JSON arrays
+5. Do NOT skip the conversational response text - it is REQUIRED
+
+Example correct response structure:
+- First: "I'll analyze the code and create a task list to track progress."
+- Then: [function_call to TodoWrite tool]
+
 Use the native function calling mechanism only.`.trim();
   }
 
@@ -245,6 +258,24 @@ Use the native function calling mechanism only.`.trim();
     const isFlashModel = geminiModel.includes('2.5-flash');
     const isStream = claudeRequest.stream === true;
     const hasThinking = claudeRequest.thinking?.type === 'enabled' || !claudeThinking;
+
+    // CRITICAL FIX: FLASH模型的非流式请求 + thinking + tools 会导致MALFORMED_FUNCTION_CALL
+    // 对于这种组合，完全禁用thinking来避免错误
+    if (isFlashModel && !isStream && hasTools && hasThinking) {
+      Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + non-stream + thinking + tools - DISABLING thinking', {
+        model: geminiModel,
+        hasTools,
+        isStream,
+        thinking: claudeRequest.thinking?.type
+      });
+
+      return {
+        thinkingBudget: 0,  // 完全禁用thinking
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
+      };
+    }
 
     if (isFlashModel && hasThinking && hasTools && isStream) {
       Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + thinking + tools + stream', {
@@ -292,10 +323,9 @@ Use the native function calling mechanism only.`.trim();
       }
     }
 
-    // 默认情况：客户端未明确启用thinking，所有模型都启用thinking但不暴露给客户端
-    // 统一所有模型使用-1（动态预算）
+    // 默认情况：客户端未明确启用thinking，使用固定预算128
     return {
-      thinkingBudget: -1,  // 固定使用动态预算
+      thinkingBudget: 128,  // 客户端未启用推理时使用固定预算128
       includeThoughts: true,  // 启用thinking以提升响应质量
       exposeThoughtsToClient: false,  // 不暴露给客户端
       exposeToClient: false  // 兼容性字段

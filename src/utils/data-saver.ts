@@ -11,6 +11,7 @@ export interface RequestData {
   url: string;
   headers: Record<string, string>;
   body: any;
+  model?: string;
 }
 
 export interface ResponseData {
@@ -20,6 +21,7 @@ export interface ResponseData {
   headers: Record<string, string>;
   body: any;
   isStream?: boolean;
+  model?: string;
   duration?: number;
 }
 

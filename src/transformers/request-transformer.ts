@@ -134,6 +134,35 @@ export class RequestTransformer {
         !!(claudeRequest.tools && claudeRequest.tools.length > 0)
       );
 
+      // 为Flash模型+thinking添加通用响应格式指令
+      const isFlashModel = geminiModel.includes('2.5-flash');
+      const hasThinking = claudeRequest.thinking?.type === 'enabled' || shouldProcessThinking;
+
+      if (isFlashModel && hasThinking && !needsTemplate) {
+        // 即使没有工具，也要确保Flash模型生成对话内容
+        const conversationInstruction = `
+IMPORTANT: When thinking is enabled, you must still provide conversational response text.
+Response structure should be:
+1. Your thinking process (if exposed to client)
+2. Your conversational response text to the user
+3. Any tool calls if needed
+
+Never skip the conversational response. Always explain your approach or findings to the user.`.trim();
+
+        if (systemInstruction) {
+          if (systemInstruction.parts && systemInstruction.parts[0] && 'text' in systemInstruction.parts[0]) {
+            systemInstruction.parts[0].text += '\n\n' + conversationInstruction;
+          }
+        } else {
+          systemInstruction = {
+            role: 'system',
+            parts: [{
+              text: conversationInstruction
+            }]
+          };
+        }
+      }
+
       if (needsTemplate) {
         const templateInstruction = ThinkingTransformer.generateToolCallTemplateInstruction(claudeRequest);
 

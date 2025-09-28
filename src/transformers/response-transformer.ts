@@ -89,7 +89,7 @@ export class ResponseTransformer {
 
         if (candidate.content && candidate.content.parts) {
           for (const part of candidate.content.parts) {
-            if (part.text) {
+            if ('text' in part && part.text) {
               textContent += part.text;
             }
             // 检查thinking内容

@@ -446,7 +446,8 @@ export class StreamTransformer {
                     }
 
                     // 先结束当前文本块（如果有）
-                    if (currentBlockIndex === 0 && currentTextContent) {
+                    if (currentBlockIndex === 0) {
+                      // 无论是否有文本内容，都需要先结束文本块再开始工具块
                       const blockStop: ClaudeStreamEvent = {
                         type: 'content_block_stop',
                         index: 0
