@@ -1,6 +1,7 @@
 /**
- * 响应转换器 - Cloudflare Workers版本
- * 负责将Gemini响应转换为Claude格式
+ * 响应转换器
+ * 基于官方文档实现Gemini到Claude响应的正确转换
+ * 确保与流式输出保持一致的内容块处理逻辑
  */
 
 import {
@@ -68,11 +69,6 @@ export class ResponseTransformer {
       //   });
       // }
 
-      // 优化MALFORMED_FUNCTION_CALL处理 - 简化逻辑
-      if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
-        candidate = this.handleMalformedFunctionCall(candidate);
-      }
-
       // 转换内容块
       let contentBlocks = await this.transformContentBlocks(candidate, transformOptions.exposeThinkingToClient);
 
@@ -121,101 +117,6 @@ export class ResponseTransformer {
   }
 
   /**
-   * 处理工具调用模板，从文本中提取模板并转换为工具调用块
-   */
-  private static processToolCallTemplate(contentBlocks: ClaudeContentBlock[]): ClaudeContentBlock[] {
-    const processedBlocks: ClaudeContentBlock[] = [];
-
-    for (const block of contentBlocks) {
-      if (block.type === 'text') {
-        const textBlock = block as ClaudeTextBlock;
-        const text = textBlock.text;
-
-        // 尝试从文本中提取工具调用模板
-        const toolCalls = ThinkingTransformer.extractToolCallsFromTemplate(text);
-
-        if (toolCalls && toolCalls.length > 0) {
-          // 清理文本，移除模板标记
-          const cleanedText = ThinkingTransformer.cleanResponseText(text);
-
-          // 添加清理后的文本块（如果不为空）
-          if (cleanedText.trim()) {
-            processedBlocks.push({
-              type: 'text',
-              text: cleanedText
-            } as ClaudeTextBlock);
-          }
-
-          // 添加工具调用块
-          for (const toolCall of toolCalls) {
-            const toolUseId = `toolu_${Math.random().toString(36).substr(2, 23)}`;
-            processedBlocks.push({
-              type: 'tool_use',
-              id: toolUseId,
-              name: toolCall.name,
-              input: toolCall.arguments || {}
-            } as ClaudeToolUse);
-          }
-
-          // Logger.info('ResponseTransformer', 'Processed tool call template', {
-          //   originalTextLength: text.length,
-          //   cleanedTextLength: cleanedText.length,
-          //   toolCallsCount: toolCalls.length
-          // });
-        } else {
-          // 没有模板，保持原样
-          processedBlocks.push(block);
-        }
-      } else {
-        // 非文本块，保持原样
-        processedBlocks.push(block);
-      }
-    }
-
-    return processedBlocks;
-  }
-
-  /**
-   * 优化的MALFORMED_FUNCTION_CALL处理
-   */
-  private static handleMalformedFunctionCall(candidate: GeminiCandidate): GeminiCandidate {
-    if (!candidate.content?.parts) return candidate;
-
-    const textContent = candidate.content.parts
-      .filter(p => 'text' in p && p.text)
-      .map(p => (p as any).text)
-      .join('\n');
-
-    if (!textContent.trim()) return candidate;
-
-    const extractedToolCalls = ThinkingTransformer.extractToolCallsFromTemplate(textContent);
-
-    if (!extractedToolCalls?.length) return candidate;
-
-    const cleanedText = ThinkingTransformer.cleanResponseText(textContent);
-    const newParts: any[] = [];
-
-    if (cleanedText.trim()) {
-      newParts.push({ text: cleanedText });
-    }
-
-    extractedToolCalls.forEach(toolCall => {
-      newParts.push({
-        functionCall: {
-          name: toolCall.name,
-          args: toolCall.arguments || {}
-        }
-      });
-    });
-
-    return {
-      ...candidate,
-      content: { ...candidate.content, parts: newParts },
-      finishReason: 'STOP'
-    };
-  }
-
-  /**
    * 转换内容块
    */
   private static async transformContentBlocks(
@@ -254,18 +155,16 @@ export class ResponseTransformer {
       exposeThinkingToClient
     );
 
-    // 处理工具调用模板
-    result = this.processToolCallTemplate(result);
-
-    // Fallback处理：如果结果为空且有thinking内容但客户端未启用
+    // Fallback处理：确保与流式输出一致的thinking处理
     if (result.length === 0 || (result.length === 1 && result[0].type === 'text' && !(result[0] as any).text?.trim())) {
       const hasThinkingParts = candidate.content.parts.some((p: any) => 'thought' in p && p.thought);
       const hasRegularParts = candidate.content.parts.some((p: any) => 'text' in p && !('thought' in p));
 
       if (hasThinkingParts && !hasRegularParts && !exposeThinkingToClient) {
+        // 与流式输出保持一致：提供简单的响应而不是暴露thinking内容
         return [{
           type: 'text',
-          text: '我已经完成了分析，但由于当前配置，无法显示详细的推理过程。如需查看完整的分析思路，请启用thinking模式。'
+          text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
         }];
       }
     }
@@ -277,8 +176,8 @@ export class ResponseTransformer {
    * 转换单个部分
    */
   private static transformPart(part: GeminiPart, options?: ResponseTransformOptions): ClaudeContentBlock | null {
-    // 文本部分 - 排除带thought标记的内容
-    if ('text' in part && !('thought' in part)) {
+    // 文本部分 - 排除带thought或thoughtSignature标记的内容
+    if ('text' in part && !('thought' in part) && !('thoughtSignature' in part)) {
       return {
         type: 'text',
         text: part.text
@@ -290,8 +189,10 @@ export class ResponseTransformer {
       const functionCall = part as GeminiFunctionCallPart;
 
 
-      // 生成工具使用ID
-      const toolUseId = `toolu_${Math.random().toString(36).substr(2, 23)}`;
+      // 生成工具使用ID - 与流式输出保持一致的格式
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substr(2, 9);
+      const toolUseId = `toolu_${timestamp}_${random}`;
 
       // 处理args - 可能是字符串或对象
       let args = functionCall.functionCall.args || {};
@@ -325,8 +226,8 @@ export class ResponseTransformer {
       } as any;
     }
 
-    // 思考内容部分 - 正确处理Gemini格式
-    if ('thought' in part && 'text' in part) {
+    // 思考内容部分 - 支持thought和thoughtSignature两种格式
+    if (('thought' in part && 'text' in part) || ('thoughtSignature' in part && 'text' in part)) {
       const shouldExpose = options?.exposeThinkingToClient ?? false;
 
       // Logger.info('ResponseTransformer', 'Processing thinking content part', {

@@ -1,6 +1,9 @@
 /**
- * 工具转换器 V2
- * 负责转换Claude和Gemini之间的工具定义和调用
+ * 工具转换器
+ * 基于官方文档实现Claude和Gemini之间的正确工具转换
+ * 官方文档：
+ * - Claude: https://docs.claude.com/zh-CN/docs/agents-and-tools/tool-use/implement-tool-use
+ * - Gemini: https://ai.google.dev/gemini-api/docs/function-calling
  */
 
 import { ClaudeTool, ClaudeToolChoice } from '../types/claude';
@@ -10,18 +13,36 @@ export interface ToolConversionResult {
   tools: GeminiTool[];
   hasSpecialTools: boolean;
   functionCount: number;
+  hasOfficialTools: boolean;
+  errors: string[];
 }
 
 export class ToolTransformer {
   /**
-   * 转换Claude工具定义为Gemini工具
+   * 根据官方文档转换Claude工具定义为Gemini工具
+   *
+   * Claude工具要求：
+   * - 详细的name（匹配^[a-zA-Z0-9_-]{1,64}$）
+   * - 极其详细的description
+   * - 精确的JSON Schema参数
+   *
+   * Gemini工具要求：
+   * - 清晰的函数名称
+   * - 详细的功能描述
+   * - 强类型参数定义
    */
   static convertTools(claudeTools: ClaudeTool[]): ToolConversionResult {
     const tools: GeminiTool[] = [];
+    const errors: string[] = [];
     let functionCount = 0;
+    let hasOfficialTools = false;
+    let hasSpecialTools = false;
+
+    // 过滤掉不常用且容易引起MALFORMED_FUNCTION_CALL的工具
+    const filteredTools = this.filterProblematicTools(claudeTools);
 
     // 检查是否有官方 web_search_20250305 工具
-    const hasOfficialWebSearch = claudeTools.some((t: any) => t.type === 'web_search_20250305');
+    const hasOfficialWebSearch = filteredTools.some((t: any) => t.type === 'web_search_20250305');
 
     if (hasOfficialWebSearch) {
       // 如果有官方搜索工具，只返回google_search
@@ -29,13 +50,15 @@ export class ToolTransformer {
       return {
         tools,
         hasSpecialTools: true,
-        functionCount: 0
+        hasOfficialTools: true,
+        functionCount: 0,
+        errors
       };
     }
 
     // 转换所有工具，包括Claude官方工具
     // 作为代理服务，不应该过滤工具，而是忠实转换
-    const convertedTools = claudeTools.map(tool => {
+    const convertedTools = filteredTools.map(tool => {
       // 对于Claude官方工具，转换为适合的格式
       if (tool.type && [
         'bash_20250124',
@@ -58,7 +81,8 @@ export class ToolTransformer {
     if (convertedTools.length > 0) {
       const functionDeclarations: GeminiFunctionDeclaration[] = convertedTools.map(tool => ({
         name: tool.name,
-        description: tool.description || `${tool.name} tool`,
+        // 优化：截断过长的描述并清理特殊字符
+        description: this.sanitizeDescription(tool.description || `${tool.name} tool`),
         parameters: this.convertInputSchema(tool.input_schema || { type: 'object', properties: {} })
       }));
 
@@ -69,14 +93,16 @@ export class ToolTransformer {
       functionCount = functionDeclarations.length;
     }
 
-    const hasSpecialTools = claudeTools.some(tool =>
+    const isSpecialTool = filteredTools.some(tool =>
       this.isSpecialTool(tool.name) || this.isClaudeOfficialTool(tool)
     );
 
     return {
       tools,
-      hasSpecialTools,
-      functionCount
+      hasSpecialTools: isSpecialTool,
+      functionCount,
+      hasOfficialTools: false,
+      errors: []
     };
   }
 
@@ -141,10 +167,16 @@ export class ToolTransformer {
 
       const s: any = Array.isArray(schema) ? schema.map(sanitize) : { ...schema };
 
-      // 移除 $schema、$id、title 等非必须元信息，避免 Unknown name 错误
-      delete s.$schema;
-      delete s.$id;
-      delete s.title;
+      // 修正：根据官方文档，保留Gemini支持的字段，只移除真正不支持的
+      const fieldsToRemove = [
+        '$schema', '$id', 'title', 'additionalProperties',
+        'examples', 'default', 'format', 'pattern',
+        'minLength', 'maxLength', 'minimum', 'maximum',
+        'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'
+        // 注意：enum, const 实际上是被Gemini支持的，不应该移除
+      ];
+
+      fieldsToRemove.forEach(field => delete s[field]);
 
       // 规范 type
       if (!s.type) {
@@ -183,11 +215,6 @@ export class ToolTransformer {
         }
       }
 
-      // additionalProperties：Gemini Function parameters 通常不接受该字段，移除以避免报错
-      if ('additionalProperties' in s) {
-        delete s.additionalProperties;
-      }
-
       // 递归清理 anyOf/allOf/oneOf（Gemini 常不支持复杂联合），保守降级为第一个分支
       ['anyOf', 'oneOf', 'allOf'].forEach((k) => {
         if (Array.isArray(s[k]) && s[k].length > 0) {
@@ -203,24 +230,33 @@ export class ToolTransformer {
       return s;
     };
 
-    const geminiSchema = sanitize(claudeSchema);
+    try {
+      const geminiSchema = sanitize(claudeSchema);
 
-    // 顶层兜底：若不是 object，则包一层 object/parameters
-    if (geminiSchema.type !== 'object') {
+      // 顶层兜底：若不是 object，则包一层 object/parameters
+      if (geminiSchema.type !== 'object') {
+        return {
+          type: 'object',
+          properties: {
+            value: geminiSchema
+          }
+        };
+      }
+
+      // 确保存在 properties
+      if (!geminiSchema.properties) {
+        geminiSchema.properties = {};
+      }
+
+      return geminiSchema;
+    } catch (error) {
+      // Schema处理出错时，返回最基本的schema
+      console.warn('[ToolTransformer] Schema sanitization error:', error);
       return {
         type: 'object',
-        properties: {
-          value: geminiSchema
-        }
+        properties: {}
       };
     }
-
-    // 确保存在 properties
-    if (!geminiSchema.properties) {
-      geminiSchema.properties = {};
-    }
-
-    return geminiSchema;
   }
 
   /**
@@ -353,6 +389,56 @@ export class ToolTransformer {
     }
 
     return { errors, warnings };
+  }
+
+  /**
+   * 过滤掉容易引起MALFORMED_FUNCTION_CALL的工具
+   */
+  static filterProblematicTools(tools: ClaudeTool[]): ClaudeTool[] {
+    const problematicToolNames = [
+      'NotebookEdit',
+      'SlashCommand',
+      'MultiEdit'
+    ];
+
+    const filtered = tools.filter(tool =>
+      !problematicToolNames.includes(tool.name)
+    );
+
+    if (filtered.length !== tools.length) {
+      console.log(`[ToolTransformer] Filtered out ${tools.length - filtered.length} problematic tools`);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * 清理工具描述，根据Gemini官方文档优化
+   * 文档强调：要"extremely clear and specific"
+   */
+  static sanitizeDescription(description: string): string {
+    // 保持描述的清晰度，但限制长度避免过于冗长
+    let cleanDesc = description
+      // 保留有意义的标点和格式
+      .replace(/[^\w\s\-.,!?():\n"'/]/g, ' ')
+      // 清理多余空白，但保留换行
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n\s*\n/g, '\n')
+      .trim();
+
+    // // 如果描述过长，智能截断但保持完整性
+    if (cleanDesc.length > 1200) {
+      // 在句号或换行处截断，保持语义完整性
+      const truncateAt = cleanDesc.lastIndexOf('.', 1200) ||
+                         cleanDesc.lastIndexOf('\n', 1200) ||
+                         1200;
+      cleanDesc = cleanDesc.substring(0, truncateAt);
+      if (!cleanDesc.endsWith('.')) {
+        cleanDesc += '.';
+      }
+    }
+
+    return cleanDesc;
   }
 
 }

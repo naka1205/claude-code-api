@@ -225,6 +225,7 @@ export type ClaudeStreamEventType =
 
 /**
  * Claude 流式事件
+ * 基于官方文档：https://docs.claude.com/zh-CN/docs/build-with-claude/streaming
  */
 export interface ClaudeStreamEvent {
   type: ClaudeStreamEventType;
@@ -232,14 +233,16 @@ export interface ClaudeStreamEvent {
   index?: number;
   content_block?: ClaudeContentBlock;
   delta?: {
-    type?: string;
+    type: 'text_delta' | 'input_json_delta' | 'thinking_delta';
     text?: string;
-    thinking?: string;  // 支持思考内容delta
+    thinking?: string;  // Extended thinking 内容delta
     partial_json?: string;
     stop_reason?: string;
     stop_sequence?: string;
     usage?: {
       output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
     };
   };
   usage?: {

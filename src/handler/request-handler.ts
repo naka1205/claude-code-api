@@ -14,6 +14,7 @@ import { ApiKeyManager } from './api-key-manager';
 import { KeyUsageCache } from './key-usage-cache';
 import { ApiResponse } from '../client';
 import { generateRequestId, createErrorContext, maskApiKey, maskSensitiveData } from '../utils/common';
+import { Logger } from '../utils/logger';
 
 export interface HandlerConfig {
   enableValidation: boolean;
@@ -50,14 +51,14 @@ export class RequestHandler {
   /**
    * 处理消息请求
    */
-  async handleMessagesRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
-    const finalRequestId = requestId || generateRequestId();
+  async handleMessagesRequest(context: RequestContext, request: Request, requestId: string): Promise<Response> {
     const startTime = Date.now();
-    // 使用 requestId 作为会话ID（Claude Code 官方命令行工具）
-    const sessionId = finalRequestId;
 
     try {
-      
+      const claudeRequest = context.body as ClaudeRequest;
+
+      // 记录客户端请求
+      Logger.logRequest(requestId, claudeRequest.model, claudeRequest);
 
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
@@ -72,10 +73,8 @@ export class RequestHandler {
           
           return this.responseManager.createErrorResponse(400, validationError);
         }
-        
-      }
 
-      const claudeRequest = context.body as ClaudeRequest;
+      }
 
       // 3. 选择最佳API密钥
       const geminiModel = this.getGeminiModel(claudeRequest.model);
@@ -88,13 +87,9 @@ export class RequestHandler {
         return this.responseManager.createErrorResponse(429, 'No available API keys');
       }
 
-      // 记录密钥使用
       await KeyUsageCache.reserve(selectedKey);
 
-
-      // 提取thinking配置
       let exposeThinkingToClient = false;
-
 
       if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
         const thinkingConfig = ThinkingTransformer.transformThinking(
@@ -135,7 +130,7 @@ export class RequestHandler {
       try {
         if (isStreamRequest) {
           // 流式响应
-          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true, finalRequestId);
+          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true, requestId);
 
           const duration = Date.now() - startTime;
 
@@ -145,7 +140,7 @@ export class RequestHandler {
               claudeRequest.model,
               streamResponse.headers,
               exposeThinkingToClient,
-              finalRequestId
+              requestId
             );
           } else {
             // 非流式错误响应 - 直接转换错误格式返回
@@ -157,11 +152,11 @@ export class RequestHandler {
               headers: (streamResponse as any).headers,
               body: (streamResponse as any).body || {},
               isStream: false
-            }, claudeRequest.model, exposeThinkingToClient);
+            }, claudeRequest.model, exposeThinkingToClient, requestId);
           }
         } else {
           // 非流式响应
-          const response = await client.sendRequest(endpoint, geminiRequest, false, finalRequestId);
+          const response = await client.sendRequest(endpoint, geminiRequest, false, requestId);
 
           const duration = Date.now() - startTime;
 
@@ -173,7 +168,8 @@ export class RequestHandler {
           return await this.responseManager.handleGeminiResponse(
             response as ApiResponse,
             claudeRequest.model,
-            exposeThinkingToClient
+            exposeThinkingToClient,
+            requestId
           );
         }
       } catch (networkError) {
@@ -183,7 +179,7 @@ export class RequestHandler {
           'handleMessagesRequest - Network Request',
           networkError,
           {
-            requestId: finalRequestId,
+            requestId: requestId,
             selectedKeyMasked: maskApiKey(selectedKey),
             endpoint,
             geminiModel,
@@ -214,7 +210,7 @@ export class RequestHandler {
         'handleMessagesRequest',
         error,
         {
-          requestId: finalRequestId,
+          requestId: requestId,
           context: {
             method: context.method,
             pathname: context.pathname,
@@ -239,8 +235,7 @@ export class RequestHandler {
   /**
    * 处理token计数请求
    */
-  async handleCountTokensRequest(context: RequestContext, request: Request, requestId?: string): Promise<Response> {
-    const finalRequestId = requestId || generateRequestId();
+  async handleCountTokensRequest(context: RequestContext, request: Request, requestId: string): Promise<Response> {
 
     try {
       // 1. 提取API密钥
@@ -281,7 +276,7 @@ export class RequestHandler {
 
       // 6. 发送计数请求
       const endpoint = this.getCountEndpoint(countRequest.model);
-      const response = await client.sendRequest(endpoint, geminiRequest, false, finalRequestId);
+      const response = await client.sendRequest(endpoint, geminiRequest, false, requestId);
 
       // 7. 处理响应
       if ('body' in response && response.body) {
@@ -306,7 +301,7 @@ export class RequestHandler {
         'handleCountTokensRequest',
         error,
         {
-          requestId: finalRequestId,
+          requestId: requestId,
           context: {
             method: context.method,
             pathname: context.pathname,

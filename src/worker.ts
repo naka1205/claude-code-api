@@ -7,6 +7,7 @@ import { RequestHandler } from './handler';
 import { createCorsHeaders, createResponseHeaders } from './utils/cors';
 import { generateRequestId, headersToObject } from './utils/common';
 import { createErrorResponse } from './utils/response';
+import { Logger } from './utils/logger';
 
 export interface Env {
   KV?: KVNamespace;  // Make KV optional
@@ -48,7 +49,23 @@ export default {
       const method = request.method;
       const pathname = url.pathname;
 
-      const requestId = generateRequestId();
+      // 生成唯一请求ID - 确保每个请求都不同
+      const cfRay = request.headers.get('cf-ray');
+ 
+      let requestId: string;
+      if (cfRay) {
+        // 生产环境使用CF-Ray
+        requestId = cfRay;
+      } else {
+        // 本地开发环境：确保每个请求都有唯一ID
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).substr(2, 8);
+        const colo = (request as any).cf?.colo || 'dev';
+
+        requestId = `${colo}_${timestamp}_${random}`;
+      }
+
+      console.log('Generated unique requestId:', requestId);
 
       // Convert URLSearchParams and Headers for Workers environment
       const queryParams: Record<string, string> = {};
@@ -59,7 +76,7 @@ export default {
       const headerObj = headersToObject(request.headers);
 
 
-      
+
 
       // Get config from environment
       const corsEnabled = env.CORS_ENABLED !== 'false';
@@ -83,6 +100,60 @@ export default {
             timestamp: new Date().toISOString(),
             environment: 'cloudflare-workers'
           }),
+          { status: 200, headers }
+        );
+      }
+
+      // Logs endpoint for debugging
+      if (method === 'GET' && pathname === '/logs') {
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+
+        const logs = Logger.getAllLogs();
+        const stats = Logger.getStats();
+
+        return new Response(
+          JSON.stringify({
+            stats,
+            logs,
+            timestamp: new Date().toISOString()
+          }),
+          { status: 200, headers }
+        );
+      }
+
+      // Get specific log by ID
+      if (method === 'GET' && pathname.startsWith('/logs/')) {
+        const requestId = pathname.split('/')[2];
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+
+        const log = Logger.getLog(requestId);
+        if (!log) {
+          return new Response(
+            JSON.stringify({ error: 'Log not found' }),
+            { status: 404, headers }
+          );
+        }
+
+        return new Response(
+          JSON.stringify(log),
+          { status: 200, headers }
+        );
+      }
+
+      // Clear logs endpoint
+      if (method === 'DELETE' && pathname === '/logs') {
+        const headers = corsEnabled
+          ? createResponseHeaders('application/json')
+          : new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+
+        const count = Logger.clear();
+
+        return new Response(
+          JSON.stringify({ message: `Cleared ${count} log entries` }),
           { status: 200, headers }
         );
       }

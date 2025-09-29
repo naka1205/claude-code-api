@@ -98,8 +98,7 @@ export class RequestTransformer {
         const thinkingConfig = ThinkingTransformer.transformThinking(
           claudeRequest.thinking,
           geminiModel,
-          claudeRequest,
-          !!(claudeRequest.tools && claudeRequest.tools.length > 0)  // 传入工具存在状态
+          claudeRequest
         );
 
         // Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);
@@ -126,105 +125,32 @@ export class RequestTransformer {
       // 处理系统消息
       let systemInstruction = claudeRequest.system ? this.transformSystemMessage(claudeRequest.system) : null;
 
-      // 检查是否需要为 FLASH + thinking + tools 添加工具调用模板
-      const needsTemplate = ThinkingTransformer.needsToolCallTemplate(
-        claudeRequest,
-        geminiModel,
-        !!(claudeRequest.tools && claudeRequest.tools.length > 0)
-      );
-
-      // 为Flash模型+thinking添加通用响应格式指令
-      const isFlashModel = geminiModel.includes('2.5-flash');
-      const hasThinking = claudeRequest.thinking?.type === 'enabled' || shouldProcessThinking;
-
-      if (isFlashModel && hasThinking && !needsTemplate) {
-        // 即使没有工具，也要确保Flash模型生成对话内容
-        const conversationInstruction = `
-IMPORTANT: When thinking is enabled, you must still provide conversational response text.
-Response structure should be:
-1. Your thinking process (if exposed to client)
-2. Your conversational response text to the user
-3. Any tool calls if needed
-
-Never skip the conversational response. Always explain your approach or findings to the user.`.trim();
-
-        if (systemInstruction) {
-          if (systemInstruction.parts && systemInstruction.parts[0] && 'text' in systemInstruction.parts[0]) {
-            systemInstruction.parts[0].text += '\n\n' + conversationInstruction;
-          }
-        } else {
-          systemInstruction = {
-            role: 'system',
-            parts: [{
-              text: conversationInstruction
-            }]
-          };
-        }
-      }
-
-      if (needsTemplate) {
-        const templateInstruction = ThinkingTransformer.generateToolCallTemplateInstruction(claudeRequest);
-
-        if (systemInstruction) {
-          // 将模板指令附加到现有系统指令
-          if (systemInstruction.parts && systemInstruction.parts[0] && 'text' in systemInstruction.parts[0]) {
-            systemInstruction.parts[0].text += '\n\n' + templateInstruction;
-          }
-        } else {
-          // 创建新的系统指令
-          systemInstruction = {
-            role: 'system',
-            parts: [{
-              text: templateInstruction
-            }]
-          };
-        }
-
-        // Logger.info('RequestTransformer', 'Added tool call template for FLASH + thinking + tools (with parsing fallback)', {
-        //   model: geminiModel,
-        //   hasThinking: claudeRequest.thinking?.type === 'enabled',
-        //   toolCount: claudeRequest.tools?.length || 0
-        // });
-      }
-
       if (systemInstruction) {
         geminiRequest.systemInstruction = systemInstruction;
       }
 
-      // 9. 处理工具 - 对于需要模板的情况，只传递核心工具给Gemini
+      // 9. 处理工具
       if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-        // 检查是否需要模板方案
-        const needsTemplate = ThinkingTransformer.needsToolCallTemplate(
-          claudeRequest,
-          geminiModel,
-          true
-        );
+        try {
+          // 根据官方文档建议：推荐10-20个工具为最大值
+          const limitedTools = claudeRequest.tools.slice(0, 15);
+          const toolResult = ToolTransformer.convertTools(limitedTools);
 
-        if (needsTemplate) {
-          // 使用模板方案，过滤复杂工具给Gemini，减少MALFORMED_FUNCTION_CALL概率
-          // 虽然仍可能出现MALFORMED_FUNCTION_CALL，但response-transformer会解析模板并纠正
-          const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];
-          const filteredTools = claudeRequest.tools.filter(tool => !excludedTools.includes(tool.name));
-
-          // Logger.info('RequestTransformer', 'Using template approach with parsing fallback', {
-          //   model: geminiModel,
-          //   originalToolCount: claudeRequest.tools.length,
-          //   filteredToolCount: filteredTools.length,
-          //   excludedTools,
-          //   filteredTools: filteredTools.map(t => t.name)
-          // });
-
-          if (filteredTools.length > 0) {
-            const toolResult = ToolTransformer.convertTools(filteredTools);
-            if (toolResult.tools.length > 0) {
-              geminiRequest.tools = toolResult.tools;
-            }
+          // 记录工具转换警告和错误
+          if (toolResult.errors && toolResult.errors.length > 0) {
+            console.warn(`[RequestTransformer] Tool conversion errors: ${toolResult.errors.join(', ')}`);
+            warnings.push({
+              type: 'warning',
+              message: `Tool conversion issues: ${toolResult.errors.length} errors found`,
+              parameter: 'tools'
+            });
           }
-        } else {
-          // 正常情况，传递所有tools给Gemini
-          const toolResult = ToolTransformer.convertTools(claudeRequest.tools);
+
           if (toolResult.tools.length > 0) {
             geminiRequest.tools = toolResult.tools;
+            console.log(`[RequestTransformer] Successfully converted ${toolResult.functionCount} tools`);
+          } else {
+            console.warn('[RequestTransformer] No tools were successfully converted');
           }
 
           // 检测到特殊工具，启用特殊工具处理
@@ -233,11 +159,19 @@ Never skip the conversational response. Always explain your approach or findings
           }
 
           if (claudeRequest.tool_choice) {
-            const toolConfig = ToolTransformer.convertToolChoice(claudeRequest.tool_choice, claudeRequest.tools);
+            const toolConfig = ToolTransformer.convertToolChoice(claudeRequest.tool_choice, limitedTools);
             if (toolConfig) {
               geminiRequest.toolConfig = toolConfig;
             }
           }
+        } catch (error) {
+          console.error('[RequestTransformer] Tool conversion failed:', error);
+          warnings.push({
+            type: 'warning',
+            message: `Tool conversion failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            parameter: 'tools'
+          });
+          // 继续处理，不让工具转换失败影响整个请求
         }
       }
 

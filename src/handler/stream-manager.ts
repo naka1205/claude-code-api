@@ -21,7 +21,12 @@ export class StreamManager {
       
 
       // 创建转换后的流，简化处理
-      const transformedStream = StreamTransformer.createStreamPipeline(stream, claudeModel, exposeThinkingToClient);
+      const transformedStream = StreamTransformer.createStreamPipeline(
+        stream,
+        claudeModel,
+        exposeThinkingToClient,
+        requestId
+      );
 
       // 简化SSE格式确保
       const sseStream = this.ensureSSEFormat(transformedStream);
@@ -96,104 +101,6 @@ export class StreamManager {
           encoder.encode(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`)
         );
         controller.close();
-      }
-    });
-  }
-
-  /**
-   * 创建测试流（用于调试）
-   */
-  createTestStream(): ReadableStream {
-    const encoder = new TextEncoder();
-    let counter = 0;
-
-    return new ReadableStream({
-      start(controller) {
-        // 发送message_start
-        const messageStart = {
-          type: 'message_start',
-          message: {
-            id: 'test_msg',
-            type: 'message',
-            role: 'assistant',
-            content: [],
-            model: 'test-model',
-            stop_reason: null,
-            stop_sequence: null,
-            usage: {
-              input_tokens: 10,
-              output_tokens: 0
-            }
-          }
-        };
-        controller.enqueue(
-          encoder.encode(`event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`)
-        );
-
-        // 发送content_block_start
-        const blockStart = {
-          type: 'content_block_start',
-          index: 0,
-          content_block: {
-            type: 'text',
-            text: ''
-          }
-        };
-        controller.enqueue(
-          encoder.encode(`event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`)
-        );
-
-        // 发送测试文本
-        const interval = setInterval(() => {
-          if (counter < 5) {
-            const delta = {
-              type: 'content_block_delta',
-              index: 0,
-              delta: {
-                type: 'text_delta',
-                text: `Test chunk ${counter + 1}. `
-              }
-            };
-            controller.enqueue(
-              encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`)
-            );
-            counter++;
-          } else {
-            clearInterval(interval);
-
-            // 发送结束事件
-            const blockStop = {
-              type: 'content_block_stop',
-              index: 0
-            };
-            controller.enqueue(
-              encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`)
-            );
-
-            const messageDelta = {
-              type: 'message_delta',
-              delta: {
-                stop_reason: 'end_turn',
-                stop_sequence: null
-              },
-              usage: {
-                output_tokens: 20
-              }
-            };
-            controller.enqueue(
-              encoder.encode(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`)
-            );
-
-            const stopEvent = {
-              type: 'message_stop'
-            };
-            controller.enqueue(
-              encoder.encode(`event: message_stop\ndata: ${JSON.stringify(stopEvent)}\n\n`)
-            );
-
-            controller.close();
-          }
-        }, 100);
       }
     });
   }

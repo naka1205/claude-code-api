@@ -1,6 +1,7 @@
 /**
- * 内容转换器 - Cloudflare Workers版本
+ * 内容转换器
  * 处理Claude和Gemini之间的内容格式转换
+ * 确保thinking、工具调用等内容的正确处理
  */
 
 import {
@@ -301,8 +302,8 @@ export class ContentTransformer {
 
     // 第一轮：按照Gemini的标记分类内容
     for (const part of parts) {
-      // 处理标记为thought的内容
-      if ('thought' in part && 'text' in part) {
+      // 处理标记为thought的内容或包含thoughtSignature的内容
+      if (('thought' in part && 'text' in part) || ('thoughtSignature' in part && 'text' in part)) {
         thinkingParts.push((part as any).text);
         continue;
       }
@@ -343,46 +344,41 @@ export class ContentTransformer {
       }
     }
 
-    // 第二轮：处理thinking内容
+    // 第二轮：处理thinking内容 - 根据官方文档：保持原始结构，不合并
     if (thinkingParts.length > 0) {
-      const combinedThinking = thinkingParts.join('\n\n');
-
-      // Logger.info('ContentTransformer', `Processing thinking content: ${thinkingParts.length} parts, expose=${exposeThinkingToClient}`);
+      console.log(`[ContentTransformer] Processing ${thinkingParts.length} thinking parts as separate blocks, expose=${exposeThinkingToClient}`);
 
       if (exposeThinkingToClient) {
-        // 当客户端启用thinking时，分离thinking和response
-        const separated = ThinkingTransformer.separateThinkingAndResponse(combinedThinking);
+        // 为每个thinking part创建独立的block，保持原始结构并保留Gemini签名
+        thinkingParts.forEach((thinkingText, index) => {
+          // 尝试从原始parts中找到对应的thoughtSignature
+          const originalPart = parts.find(p =>
+            (('thought' in p && 'text' in p) || ('thoughtSignature' in p && 'text' in p)) &&
+            (p as any).text === thinkingText
+          );
+          const originalSignature = originalPart ? (originalPart as any).thoughtSignature : undefined;
 
-        if (separated.thinking.trim()) {
           const thinkingBlock: ClaudeThinkingBlock = {
             type: 'thinking',
-            thinking: separated.thinking,
-            signature: this.generateThinkingSignature(separated.thinking)
+            thinking: thinkingText,
+            signature: ThinkingTransformer.preserveGeminiThoughtSignature(originalSignature, thinkingText)
           };
           blocks.push(thinkingBlock);
-        }
-
-        if (separated.response.trim()) {
-          blocks.push({
-            type: 'text',
-            text: separated.response
-          });
-        }
+        });
+        console.log(`[ContentTransformer] Created ${thinkingParts.length} separate thinking blocks as per Gemini docs`);
       } else {
-        // 关键优化：当thinking不暴露给客户端时，检查是否有单独的response部分
+        // 当thinking不暴露给客户端时，检查是否有response部分
+        const combinedThinking = thinkingParts.join('\n\n');
         const separated = ThinkingTransformer.separateThinkingAndResponse(combinedThinking);
 
         if (separated.response.trim()) {
-          // 如果有明确的response部分，使用它
           blocks.push({
             type: 'text',
             text: separated.response
           });
-          // Logger.info('ContentTransformer', 'Extracted response from thinking content');
+          console.log('[ContentTransformer] Extracted response from thinking content');
         } else {
-          // 如果没有明确的response部分，且没有其他文本内容，提供fallback
-          // Logger.warn('ContentTransformer', 'No response part found in thinking content, will check for other text content');
-          // 不在这里直接添加fallback，等待检查是否有其他文本内容
+          console.log('[ContentTransformer] No response part found in thinking content, will check for other text content');
         }
       }
     }
@@ -429,12 +425,12 @@ export class ContentTransformer {
 
     // Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
 
-    // 最终fallback检查：如果没有任何内容块，但有thinking内容
+    // 最终fallback检查：与流式输出保持一致的处理
     if (blocks.length === 0 && thinkingParts.length > 0 && !exposeThinkingToClient) {
       // Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
       blocks.push({
         type: 'text',
-        text: '我已经完成了分析，但由于当前配置，无法显示详细的推理过程。如需查看完整的分析思路，请启用思考模式。'
+        text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
       });
     }
 

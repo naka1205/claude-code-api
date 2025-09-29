@@ -98,153 +98,6 @@ export class ThinkingTransformer {
   };
 
   /**
-   * 检测是否需要使用工具调用模板解决方案
-   */
-  static needsToolCallTemplate(
-    claudeRequest: ClaudeRequest,
-    geminiModel: string,
-    hasTools: boolean = false
-  ): boolean {
-    // 禁用非流式请求的模板模式，因为它会导致 MALFORMED_FUNCTION_CALL
-    // 只对 FLASH 模型 + thinking + tools + 流式 的组合使用模板
-    const isFlashModel = geminiModel.includes('2.5-flash');
-    const hasThinking = claudeRequest.thinking?.type === 'enabled';
-    const isStream = claudeRequest.stream === true;
-
-    return isFlashModel && hasThinking && hasTools && isStream;
-  }
-
-  /**
-   * 从模板响应中提取工具调用（增强版）
-   */
-  static extractToolCallsFromTemplate(text: string): Array<{ name: string; arguments: any }> | null {
-    if (!text) return null;
-
-    // 多种模板格式支持
-    const patterns = [
-      /<TOOL_CALLS>\s*(\[[\s\S]*?\])\s*<\/TOOL_CALLS>/,
-      /```json\s*(\[[\s\S]*?\])\s*```/,
-      /TOOL_CALLS:\s*(\[[\s\S]*?\])/,
-      // 兜底模式：查找任何看起来像工具调用的JSON数组
-      /\[\s*\{\s*"name":\s*"[^"]+"\s*,\s*"arguments":\s*\{[\s\S]*?\}\s*\}\s*\]/
-    ];
-
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        try {
-          const toolCalls = JSON.parse(match[1] || match[0]);
-          if (Array.isArray(toolCalls)) {
-            const validCalls = toolCalls.filter(call => call && call.name);
-            if (validCalls.length > 0) {
-              // Logger.info('ThinkingTransformer', 'Successfully extracted tool calls from template', {
-              //   pattern: pattern.source,
-              //   callsCount: validCalls.length,
-              //   calls: validCalls.map(c => ({ name: c.name, hasArgs: !!c.arguments }))
-              // });
-              return validCalls;
-            }
-          }
-        } catch (error) {
-          // Logger.debug('ThinkingTransformer', 'Failed to parse tool calls with pattern', {
-          //   pattern: pattern.source,
-          //   error: error instanceof Error ? error.message : String(error),
-          //   match: match[1] || match[0]
-          // });
-          continue;
-        }
-      }
-    }
-
-    // 最后尝试查找单个工具调用
-    const singleCallPattern = /"name":\s*"([^"]+)"\s*,\s*"arguments":\s*(\{[^}]*\})/g;
-    const singleMatches = [];
-    let singleMatch;
-
-    while ((singleMatch = singleCallPattern.exec(text)) !== null) {
-      try {
-        const args = JSON.parse(singleMatch[2]);
-        singleMatches.push({
-          name: singleMatch[1],
-          arguments: args
-        });
-      } catch (e) {
-        continue;
-      }
-    }
-
-    if (singleMatches.length > 0) {
-      // Logger.info('ThinkingTransformer', 'Extracted individual tool calls', {
-      //   callsCount: singleMatches.length
-      // });
-      return singleMatches;
-    }
-
-    return null;
-  }
-
-  /**
-   * 清理响应文本，移除工具调用模板标记（增强版）
-   */
-  static cleanResponseText(text: string): string {
-    if (!text) return text;
-
-    // 移除各种格式的工具调用标记
-    const patterns = [
-      /<TOOL_CALLS>\s*\[[\s\S]*?\]\s*<\/TOOL_CALLS>/g,
-      /```json\s*\[[\s\S]*?\]\s*```/g,
-      /TOOL_CALLS:\s*\[[\s\S]*?\]/g
-    ];
-
-    let cleanedText = text;
-    for (const pattern of patterns) {
-      cleanedText = cleanedText.replace(pattern, '');
-    }
-
-    // 清理多余的空行
-    cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n').trim();
-
-    return cleanedText;
-  }
-
-  /**
-   * 生成工具调用模板的系统指令
-   */
-  static generateToolCallTemplateInstruction(claudeRequest: ClaudeRequest): string {
-    if (!claudeRequest.tools || claudeRequest.tools.length === 0) {
-      return '';
-    }
-
-    const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];
-    const coreTools = claudeRequest.tools
-      .filter(tool => !excludedTools.includes(tool.name))
-      .map(tool => tool.name);
-    const availableTools = coreTools.join(', ');
-
-    return `
-CRITICAL RESPONSE FORMAT REQUIREMENTS:
-
-1. ALWAYS provide a conversational response text FIRST before calling any tools
-2. Your response must follow this order:
-   a) Normal conversational text explaining your approach or findings
-   b) Then, if needed, call tools using the standard function_call format
-
-3. When calling tools:
-   - Use the standard function_call format provided by Gemini
-   - Call tools one at a time when possible
-   - Available core tools: ${availableTools}
-
-4. Do NOT use template formats like <TOOL_CALLS> or JSON arrays
-5. Do NOT skip the conversational response text - it is REQUIRED
-
-Example correct response structure:
-- First: "I'll analyze the code and create a task list to track progress."
-- Then: [function_call to TodoWrite tool]
-
-Use the native function calling mechanism only.`.trim();
-  }
-
-  /**
    * 转换Claude thinking配置为Gemini格式
    * 基于官方文档优化：Claude Extended Thinking与Gemini thinkingConfig的正确转换
    *
@@ -256,11 +109,10 @@ Use the native function calling mechanism only.`.trim();
   static transformThinking(
     claudeThinking: ClaudeThinking | undefined,
     geminiModel: string,
-    claudeRequest: ClaudeRequest,
-    hasTools: boolean = false
+    claudeRequest: ClaudeRequest
   ): ThinkingConfig | null {
     // 检查是否是2.0系列模型，它们不支持thinking
-    if (geminiModel.includes('2.0') || geminiModel.includes('exp-1206')) {
+    if (geminiModel.includes('2.0')) {
       // 2.0系列和实验模型不支持thinking，必须禁用以防止接口报错
       return {
         thinkingBudget: 0,  // 禁用thinking
@@ -282,69 +134,28 @@ Use the native function calling mechanism only.`.trim();
       };
     }
 
-    // 检测问题组合：FLASH + thinking + tools + 流式 容易导致只输出thinking不执行工具
-    const isFlashModel = geminiModel.includes('2.5-flash');
-    const isStream = claudeRequest.stream === true;
-    const hasThinking = claudeRequest.thinking?.type === 'enabled' || !claudeThinking;
-
-    // CRITICAL FIX: FLASH模型的非流式请求 + thinking + tools 会导致MALFORMED_FUNCTION_CALL
-    // 对于这种组合，完全禁用thinking来避免错误
-    if (isFlashModel && !isStream && hasTools && hasThinking) {
-      // Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + non-stream + thinking + tools - DISABLING thinking', {
-      //   model: geminiModel,
-      //   hasTools,
-      //   isStream,
-      //   thinking: claudeRequest.thinking?.type
-      // });
-
-      return {
-        thinkingBudget: 0,  // 完全禁用thinking
-        includeThoughts: false,
-        exposeThoughtsToClient: false,
-        exposeToClient: false
-      };
-    }
-
-    if (isFlashModel && hasThinking && hasTools && isStream) {
-      // Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + thinking + tools + stream', {
-      //   model: geminiModel,
-      //   hasTools,
-      //   isStream,
-      //   thinking: claudeRequest.thinking?.type
-      // });
-
-      // 对于流式请求，降低thinking预算避免"思考陷阱"
-      return {
-        thinkingBudget: 512,  // 使用较低的固定预算
-        includeThoughts: true,
-        exposeThoughtsToClient: claudeRequest.thinking?.type === 'enabled',
-        exposeToClient: claudeRequest.thinking?.type === 'enabled'
-      };
-    }
-
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
         // 根据官方文档，优先使用Claude指定的budget_tokens
-        let budget: number;
-        if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
-          // Claude官方要求最小1024 tokens，确保预算符合Gemini模型限制
-          budget = Math.min(claudeThinking.budget_tokens, limits.max);
-          budget = Math.max(budget, limits.min);
-        } else {
-          // 未指定预算或预算过小时，使用动态预算
-          budget = -1;
-        }
+        // let budget: number;
+        // if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
+        //   // Claude官方要求最小1024 tokens，确保预算符合Gemini模型限制
+        //   budget = Math.min(claudeThinking.budget_tokens, limits.max);
+        //   budget = Math.max(budget, limits.min);
+        // } else {
+        //   // 未指定预算或预算过小时，使用动态预算
+        //   budget = -1;
+        // }
 
         return {
-          thinkingBudget: budget,
+          thinkingBudget: -1,
           includeThoughts: true,
-          exposeThoughtsToClient: true,  // 客户端启用thinking时应该暴露
-          exposeToClient: true  // 兼容性字段
+          exposeThoughtsToClient: true,
+          exposeToClient: true
         };
       } else if (claudeThinking.type === 'disabled') {
         if (!limits.canDisable) {
-          // 模型不允许禁用thinking，使用最小值
           return {
             thinkingBudget: limits.min,
             includeThoughts: false,
@@ -361,17 +172,12 @@ Use the native function calling mechanism only.`.trim();
       }
     }
 
-    // 默认情况：客户端未明确启用thinking
-    // 根据官方文档建议，对于中等复杂度任务使用适中的预算
-    const complexity = this.analyzeComplexity(claudeRequest);
-    const defaultBudget = complexity.score > this.complexityThresholds.medium ?
-      Math.min(2048, limits.max) : Math.min(512, limits.max);
-
+    // 默认情况：客户端未明确启用thinking，使用合理的默认值
     return {
-      thinkingBudget: Math.max(defaultBudget, limits.min),
-      includeThoughts: true,  // 启用thinking以提升响应质量
-      exposeThoughtsToClient: false,  // 不暴露给客户端
-      exposeToClient: false  // 兼容性字段
+      thinkingBudget: -1, // 使用动态预算
+      includeThoughts: true,
+      exposeThoughtsToClient: false,
+      exposeToClient: false
     };
   }
 
@@ -639,7 +445,7 @@ Use the native function calling mechanism only.`.trim();
    */
   static modelSupportsThinking(geminiModel: string): boolean {
     // 2.0系列和实验模型不支持thinking
-    if (geminiModel.includes('2.0') || geminiModel.includes('exp-1206')) {
+    if (geminiModel.includes('2.0')) {
       return false;
     }
     return !!this.THINKING_LIMITS[geminiModel];
@@ -727,8 +533,58 @@ Use the native function calling mechanism only.`.trim();
   }
 
   /**
+   * 保留Gemini原始推理签名，直接返给客户端
+   * 根据Gemini官方文档：思想签名不要丢失
+   */
+  static preserveGeminiThoughtSignature(
+    originalSignature?: string,
+    fallbackContent?: string,
+    contextId?: string,
+    turnNumber?: number
+  ): string {
+    // 优先使用Gemini原始签名
+    if (originalSignature) {
+      return originalSignature;
+    }
+
+    // 如果没有原始签名，基于内容生成Claude兼容签名
+    return fallbackContent ?
+      this.generateThinkingSignature(fallbackContent, contextId, turnNumber) :
+      `sig_${Math.random().toString(36).substr(2, 8)}`;
+  }
+
+  /**
+   * 转换Gemini思想签名为Claude格式
+   * Gemini的thoughtSignature需要转换为Claude的signature格式
+   */
+  static convertGeminiSignatureToClaudeFormat(
+    geminiSignature?: string,
+    thinkingContent?: string,
+    contextId?: string,
+    turnNumber?: number
+  ): string {
+    if (geminiSignature) {
+      // 如果有Gemini原始签名，保留其核心哈希部分但转换为Claude格式
+      const geminiHash = geminiSignature.includes('_') ?
+        geminiSignature.split('_')[1] || geminiSignature :
+        geminiSignature;
+
+      const context = contextId ? `_ctx${contextId.substring(0, 8)}` : '';
+      const turn = turnNumber ? `_t${turnNumber}` : '';
+      return `sig_${geminiHash}${context}${turn}`;
+    }
+
+    // 如果没有Gemini签名，基于内容生成Claude签名
+    return thinkingContent ?
+      this.generateThinkingSignature(thinkingContent, contextId, turnNumber) :
+      `sig_${Math.random().toString(36).substr(2, 8)}`;
+  }
+
+  /**
    * 生成thinking签名
    * 基于官方文档要求：用于标识和追踪thinking内容，支持多轮对话上下文维护
+   *
+   * 修复：相同内容使用相同签名，避免重复
    *
    * 官方文档要点：
    * - 签名用于维持多轮交互中的上下文
@@ -740,11 +596,11 @@ Use the native function calling mechanism only.`.trim();
     contextId?: string,
     turnNumber?: number
   ): string {
-    const timestamp = Date.now().toString(36);
-    const hash = this.simpleHash(thinkingContent);
+    // 使用内容哈希而非时间戳，确保相同内容产生相同签名
+    const contentHash = this.simpleHash(thinkingContent);
     const context = contextId ? `_ctx${contextId.substring(0, 8)}` : '';
     const turn = turnNumber ? `_t${turnNumber}` : '';
-    return `sig_${hash}_${timestamp}${context}${turn}`;
+    return `sig_${contentHash}${context}${turn}`;
   }
 
   /**

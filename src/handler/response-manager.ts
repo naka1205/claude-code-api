@@ -9,6 +9,7 @@ import { ClaudeResponse } from '../types/claude';
 import { createErrorResponse as createError, createSuccessResponse } from '../utils/response';
 import { createResponseHeaders } from '../utils/cors';
 import { getErrorTypeFromStatus, createErrorContext } from '../utils/common';
+import { Logger } from '../utils/logger';
 
 export class ResponseManager {
   /**
@@ -24,9 +25,15 @@ export class ResponseManager {
   async handleGeminiResponse(
     response: ApiResponse,
     claudeModel: string,
-    exposeThinkingToClient: boolean = false
+    exposeThinkingToClient: boolean = false,
+    requestId?: string
   ): Promise<Response> {
     try {
+      // 记录GEMINI响应
+      if (requestId) {
+        Logger.logResponse(requestId, response.body);
+      }
+
       // 检查错误响应
       if (response.statusCode >= 400) {
         return this.handleGeminiError(response);
