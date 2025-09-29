@@ -22,7 +22,6 @@ import { ModelMapper } from '../models';
 import { ContentTransformer } from './content-transformer';
 import { ToolTransformer } from './tool-transformer';
 import { ThinkingTransformer } from './thinking-transformer';
-import { Logger } from '../utils/logger';
 
 export interface TransformOptions {
   enableSpecialToolHandling?: boolean;
@@ -89,12 +88,12 @@ export class RequestTransformer {
                                    ThinkingTransformer.modelSupportsThinking(geminiModel);
 
       if (shouldProcessThinking) {
-        Logger.info('RequestTransformer', 'Processing thinking configuration', {
-          thinking: claudeRequest.thinking,
-          geminiModel,
-          enableThinking: transformOptions.enableThinking,
-          modelSupports: ThinkingTransformer.modelSupportsThinking(geminiModel)
-        });
+        // Logger.info('RequestTransformer', 'Processing thinking configuration', {
+        //   thinking: claudeRequest.thinking,
+        //   geminiModel,
+        //   enableThinking: transformOptions.enableThinking,
+        //   modelSupports: ThinkingTransformer.modelSupportsThinking(geminiModel)
+        // });
 
         const thinkingConfig = ThinkingTransformer.transformThinking(
           claudeRequest.thinking,
@@ -103,7 +102,7 @@ export class RequestTransformer {
           !!(claudeRequest.tools && claudeRequest.tools.length > 0)  // 传入工具存在状态
         );
 
-        Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);
+        // Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);
 
         if (thinkingConfig) {
           (generationConfig as any).thinkingConfig = {
@@ -111,10 +110,10 @@ export class RequestTransformer {
             includeThoughts: thinkingConfig.includeThoughts
           };
 
-          Logger.info('RequestTransformer', 'Applied thinking config to generation', {
-            thinkingBudget: thinkingConfig.thinkingBudget,
-            includeThoughts: thinkingConfig.includeThoughts
-          });
+          // Logger.info('RequestTransformer', 'Applied thinking config to generation', {
+          //   thinkingBudget: thinkingConfig.thinkingBudget,
+          //   includeThoughts: thinkingConfig.includeThoughts
+          // });
         }
       }
 
@@ -181,11 +180,11 @@ Never skip the conversational response. Always explain your approach or findings
           };
         }
 
-        Logger.info('RequestTransformer', 'Added tool call template for FLASH + thinking + tools (with parsing fallback)', {
-          model: geminiModel,
-          hasThinking: claudeRequest.thinking?.type === 'enabled',
-          toolCount: claudeRequest.tools?.length || 0
-        });
+        // Logger.info('RequestTransformer', 'Added tool call template for FLASH + thinking + tools (with parsing fallback)', {
+        //   model: geminiModel,
+        //   hasThinking: claudeRequest.thinking?.type === 'enabled',
+        //   toolCount: claudeRequest.tools?.length || 0
+        // });
       }
 
       if (systemInstruction) {
@@ -207,13 +206,13 @@ Never skip the conversational response. Always explain your approach or findings
           const excludedTools = ['MultiEdit', 'NotebookEdit', 'SlashCommand'];
           const filteredTools = claudeRequest.tools.filter(tool => !excludedTools.includes(tool.name));
 
-          Logger.info('RequestTransformer', 'Using template approach with parsing fallback', {
-            model: geminiModel,
-            originalToolCount: claudeRequest.tools.length,
-            filteredToolCount: filteredTools.length,
-            excludedTools,
-            filteredTools: filteredTools.map(t => t.name)
-          });
+          // Logger.info('RequestTransformer', 'Using template approach with parsing fallback', {
+          //   model: geminiModel,
+          //   originalToolCount: claudeRequest.tools.length,
+          //   filteredToolCount: filteredTools.length,
+          //   excludedTools,
+          //   filteredTools: filteredTools.map(t => t.name)
+          // });
 
           if (filteredTools.length > 0) {
             const toolResult = ToolTransformer.convertTools(filteredTools);

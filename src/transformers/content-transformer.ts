@@ -13,7 +13,6 @@ import {
   ClaudeThinkingBlock
 } from '../types/claude';
 import { GeminiPart, GeminiTextPart, GeminiInlineDataPart } from '../types/gemini';
-import { Logger } from '../utils/logger';
 import { ThinkingTransformer } from './thinking-transformer';
 
 export class ContentTransformer {
@@ -348,7 +347,7 @@ export class ContentTransformer {
     if (thinkingParts.length > 0) {
       const combinedThinking = thinkingParts.join('\n\n');
 
-      Logger.info('ContentTransformer', `Processing thinking content: ${thinkingParts.length} parts, expose=${exposeThinkingToClient}`);
+      // Logger.info('ContentTransformer', `Processing thinking content: ${thinkingParts.length} parts, expose=${exposeThinkingToClient}`);
 
       if (exposeThinkingToClient) {
         // 当客户端启用thinking时，分离thinking和response
@@ -379,10 +378,10 @@ export class ContentTransformer {
             type: 'text',
             text: separated.response
           });
-          Logger.info('ContentTransformer', 'Extracted response from thinking content');
+          // Logger.info('ContentTransformer', 'Extracted response from thinking content');
         } else {
           // 如果没有明确的response部分，且没有其他文本内容，提供fallback
-          Logger.warn('ContentTransformer', 'No response part found in thinking content, will check for other text content');
+          // Logger.warn('ContentTransformer', 'No response part found in thinking content, will check for other text content');
           // 不在这里直接添加fallback，等待检查是否有其他文本内容
         }
       }
@@ -428,11 +427,11 @@ export class ContentTransformer {
       }
     }
 
-    Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
+    // Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
 
     // 最终fallback检查：如果没有任何内容块，但有thinking内容
     if (blocks.length === 0 && thinkingParts.length > 0 && !exposeThinkingToClient) {
-      Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
+      // Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
       blocks.push({
         type: 'text',
         text: '我已经完成了分析，但由于当前配置，无法显示详细的推理过程。如需查看完整的分析思路，请启用思考模式。'

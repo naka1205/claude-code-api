@@ -19,7 +19,6 @@ import {
 import { ContentTransformer } from './content-transformer';
 import { ToolTransformer } from './tool-transformer';
 import { ThinkingTransformer } from './thinking-transformer';
-import { Logger } from '../utils/logger';
 
 export interface ResponseTransformOptions {
   exposeThinkingToClient?: boolean;
@@ -61,13 +60,13 @@ export class ResponseTransformer {
       }
 
       // 简化日志记录，仅在debug模式下输出详细信息
-      if (process.env.DEBUG_TRANSFORM === 'true') {
-        Logger.debug('ResponseTransformer', 'Response summary', {
-          finishReason: candidate.finishReason,
-          partsCount: candidate.content?.parts?.length || 0,
-          totalTokens: geminiResponse.usageMetadata?.totalTokenCount
-        });
-      }
+      // if (process.env.DEBUG_TRANSFORM === 'true') {
+      //   Logger.debug('ResponseTransformer', 'Response summary', {
+      //     finishReason: candidate.finishReason,
+      //     partsCount: candidate.content?.parts?.length || 0,
+      //     totalTokens: geminiResponse.usageMetadata?.totalTokenCount
+      //   });
+      // }
 
       // 优化MALFORMED_FUNCTION_CALL处理 - 简化逻辑
       if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
@@ -158,11 +157,11 @@ export class ResponseTransformer {
             } as ClaudeToolUse);
           }
 
-          Logger.info('ResponseTransformer', 'Processed tool call template', {
-            originalTextLength: text.length,
-            cleanedTextLength: cleanedText.length,
-            toolCallsCount: toolCalls.length
-          });
+          // Logger.info('ResponseTransformer', 'Processed tool call template', {
+          //   originalTextLength: text.length,
+          //   cleanedTextLength: cleanedText.length,
+          //   toolCallsCount: toolCalls.length
+          // });
         } else {
           // 没有模板，保持原样
           processedBlocks.push(block);
@@ -330,20 +329,20 @@ export class ResponseTransformer {
     if ('thought' in part && 'text' in part) {
       const shouldExpose = options?.exposeThinkingToClient ?? false;
 
-      Logger.info('ResponseTransformer', 'Processing thinking content part', {
-        thoughtFlag: (part as any).thought,
-        textLength: (part as any).text?.length || 0,
-        shouldExpose,
-        clientRequestedThinking: shouldExpose
-      });
+      // Logger.info('ResponseTransformer', 'Processing thinking content part', {
+      //   thoughtFlag: (part as any).thought,
+      //   textLength: (part as any).text?.length || 0,
+      //   shouldExpose,
+      //   clientRequestedThinking: shouldExpose
+      // });
 
       if (shouldExpose) {
         // 按照Claude格式返回thinking block，内容从text字段获取
-        Logger.debug('ResponseTransformer', 'Creating thinking block from text field', {
-          thoughtFlag: (part as any).thought,
-          textLength: (part as any).text?.length || 0,
-          exposeToClient: shouldExpose
-        });
+        // Logger.debug('ResponseTransformer', 'Creating thinking block from text field', {
+        //   thoughtFlag: (part as any).thought,
+        //   textLength: (part as any).text?.length || 0,
+        //   exposeToClient: shouldExpose
+        // });
 
         return {
           type: 'thinking',
@@ -352,11 +351,11 @@ export class ResponseTransformer {
         } as ClaudeThinkingBlock;
       } else {
         // 不暴露思考内容时，过滤掉
-        Logger.debug('ResponseTransformer', 'FILTERING OUT thinking content - client did not enable thinking exposure', {
-          textLength: (part as any).text?.length || 0,
-          shouldExpose,
-          reason: 'Client did not enable thinking mode'
-        });
+        // Logger.debug('ResponseTransformer', 'FILTERING OUT thinking content - client did not enable thinking exposure', {
+        //   textLength: (part as any).text?.length || 0,
+        //   shouldExpose,
+        //   reason: 'Client did not enable thinking mode'
+        // });
         return null;
       }
     }
@@ -382,7 +381,7 @@ export class ResponseTransformer {
         break;
       case 'MAX_TOKENS':
         stopReason = 'max_tokens';
-        Logger.warn('ResponseTransformer', 'Response terminated: MAX_TOKENS reached');
+        // Logger.warn('ResponseTransformer', 'Response terminated: MAX_TOKENS reached');
         break;
       case 'STOP_SEQUENCE':
         stopReason = 'stop_sequence';
@@ -396,16 +395,16 @@ export class ResponseTransformer {
       case 'RECITATION':
         // 处理安全过滤和内容重复等情况，映射为 end_turn
         stopReason = 'end_turn';
-        Logger.warn('ResponseTransformer', `Response terminated due to safety/recitation: ${finishReason}`);
+        // Logger.warn('ResponseTransformer', `Response terminated due to safety/recitation: ${finishReason}`);
         break;
       case 'OTHER':
         // Gemini 的 OTHER 状态，可能包含 isNewTopic 等特殊终止原因
         stopReason = 'end_turn';
-        Logger.info('ResponseTransformer', 'Response terminated with OTHER reason (may include isNewTopic)');
+        // Logger.info('ResponseTransformer', 'Response terminated with OTHER reason (may include isNewTopic)');
         break;
       default:
         if (finishReason) {
-          Logger.warn('ResponseTransformer', `Unknown finish reason: ${finishReason}`);
+          // Logger.warn('ResponseTransformer', `Unknown finish reason: ${finishReason}`);
         }
         stopReason = 'end_turn';
     }

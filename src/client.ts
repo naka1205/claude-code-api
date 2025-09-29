@@ -5,7 +5,6 @@
 
 import { headersToObject } from './utils/common';
 import { TIMEOUTS } from './utils/constants';
-import { DataSaver } from './utils/data-saver';
 
 /**
  * API客户端配置
@@ -101,18 +100,7 @@ export class GeminiApiClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     // 保存Gemini请求数据
-    if (requestId) {
-      DataSaver.saveGeminiRequest(requestId, {
-        method: 'POST',
-        url: url.toString(),
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'gemini-code/2.0.0-workers',
-          ...(isStream && { 'Accept': 'text/event-stream' })
-        },
-        body: data,
-      });
-    }
+    // 移除调试功能以提升性能
 
     try {
       const response = await fetch(url.toString(), {
@@ -159,14 +147,7 @@ export class GeminiApiClient {
         }
 
         // 保存Gemini错误响应数据
-        if (requestId) {
-          DataSaver.saveGeminiResponse(requestId, {
-            statusCode: response.status,
-            headers,
-            body: errorBody,
-            isStream: false,
-              });
-        }
+        // 移除调试功能以提升性能
 
         return {
           statusCode: response.status,
@@ -178,14 +159,7 @@ export class GeminiApiClient {
 
       if (isStream && response.body) {
         // 保存流式响应的初始数据
-        if (requestId) {
-          DataSaver.saveGeminiResponse(requestId, {
-            statusCode: response.status,
-            headers,
-            body: { isStream: true, streamStarted: true },
-            isStream: true,
-              });
-        }
+        // 移除调试功能以提升性能
 
         return {
           statusCode: response.status,
@@ -196,14 +170,7 @@ export class GeminiApiClient {
         const body = await response.json();
 
         // 保存非流式响应数据
-        if (requestId) {
-          DataSaver.saveGeminiResponse(requestId, {
-            statusCode: response.status,
-            headers,
-            body,
-            isStream: false,
-              });
-        }
+        // 移除调试功能以提升性能
 
         return {
           statusCode: response.status,

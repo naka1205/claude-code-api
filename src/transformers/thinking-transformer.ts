@@ -4,20 +4,43 @@
  */
 
 import { ClaudeRequest, ClaudeThinking } from '../types/claude';
-import { Logger } from '../utils/logger';
 
+/**
+ * Thinking配置接口
+ * 基于官方文档优化：同时支持Claude和Gemini的thinking参数
+ */
 export interface ThinkingConfig {
+  /** 思考预算（token数量）
+   * -1: 动态预算（Gemini自动调整）
+   * 0: 禁用thinking
+   * >0: 固定预算
+   */
   thinkingBudget: number;
+  /** 是否在响应中包含思考内容 */
   includeThoughts?: boolean;
+  /** 是否向客户端暴露思考内容（Claude兼容） */
   exposeThoughtsToClient?: boolean;
-  exposeToClient?: boolean;  // 兼容性字段，用于向后兼容
+  /** 向客户端暴露（向后兼容字段） */
+  exposeToClient?: boolean;
 }
 
+/**
+ * Thinking建议接口
+ * 增强版本，包含更多上下文信息
+ */
 export interface ThinkingRecommendation {
   recommended: boolean;
   reason: string;
   suggestedBudget?: number;
   modelSupport: boolean;
+  /** 复杂度分析结果 */
+  complexity?: ComplexityAnalysis;
+  /** 预算调整建议 */
+  budgetAdjustment?: {
+    original: number;
+    suggested: number;
+    reason: string;
+  };
 }
 
 export interface ComplexityAnalysis {
@@ -114,20 +137,20 @@ export class ThinkingTransformer {
           if (Array.isArray(toolCalls)) {
             const validCalls = toolCalls.filter(call => call && call.name);
             if (validCalls.length > 0) {
-              Logger.info('ThinkingTransformer', 'Successfully extracted tool calls from template', {
-                pattern: pattern.source,
-                callsCount: validCalls.length,
-                calls: validCalls.map(c => ({ name: c.name, hasArgs: !!c.arguments }))
-              });
+              // Logger.info('ThinkingTransformer', 'Successfully extracted tool calls from template', {
+              //   pattern: pattern.source,
+              //   callsCount: validCalls.length,
+              //   calls: validCalls.map(c => ({ name: c.name, hasArgs: !!c.arguments }))
+              // });
               return validCalls;
             }
           }
         } catch (error) {
-          Logger.debug('ThinkingTransformer', 'Failed to parse tool calls with pattern', {
-            pattern: pattern.source,
-            error: error instanceof Error ? error.message : String(error),
-            match: match[1] || match[0]
-          });
+          // Logger.debug('ThinkingTransformer', 'Failed to parse tool calls with pattern', {
+          //   pattern: pattern.source,
+          //   error: error instanceof Error ? error.message : String(error),
+          //   match: match[1] || match[0]
+          // });
           continue;
         }
       }
@@ -151,9 +174,9 @@ export class ThinkingTransformer {
     }
 
     if (singleMatches.length > 0) {
-      Logger.info('ThinkingTransformer', 'Extracted individual tool calls', {
-        callsCount: singleMatches.length
-      });
+      // Logger.info('ThinkingTransformer', 'Extracted individual tool calls', {
+      //   callsCount: singleMatches.length
+      // });
       return singleMatches;
     }
 
@@ -222,14 +245,19 @@ Use the native function calling mechanism only.`.trim();
   }
 
   /**
-   * 转换Claude thinking配置为Gemini格式 (增强版本)
-   * 正确处理Claude Extended Thinking与Gemini thinkingConfig的转换
+   * 转换Claude thinking配置为Gemini格式
+   * 基于官方文档优化：Claude Extended Thinking与Gemini thinkingConfig的正确转换
+   *
+   * 官方文档要点：
+   * - Claude: 最小1024 tokens预算，使用budget_tokens字段
+   * - Gemini: 支持动态thinking (-1)，各模型有不同范围
+   * - 思考签名需要正确维护以支持多轮对话上下文
    */
   static transformThinking(
     claudeThinking: ClaudeThinking | undefined,
     geminiModel: string,
     claudeRequest: ClaudeRequest,
-    hasTools: boolean = false  // 新增参数：是否有工具定义
+    hasTools: boolean = false
   ): ThinkingConfig | null {
     // 检查是否是2.0系列模型，它们不支持thinking
     if (geminiModel.includes('2.0') || geminiModel.includes('exp-1206')) {
@@ -262,12 +290,12 @@ Use the native function calling mechanism only.`.trim();
     // CRITICAL FIX: FLASH模型的非流式请求 + thinking + tools 会导致MALFORMED_FUNCTION_CALL
     // 对于这种组合，完全禁用thinking来避免错误
     if (isFlashModel && !isStream && hasTools && hasThinking) {
-      Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + non-stream + thinking + tools - DISABLING thinking', {
-        model: geminiModel,
-        hasTools,
-        isStream,
-        thinking: claudeRequest.thinking?.type
-      });
+      // Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + non-stream + thinking + tools - DISABLING thinking', {
+      //   model: geminiModel,
+      //   hasTools,
+      //   isStream,
+      //   thinking: claudeRequest.thinking?.type
+      // });
 
       return {
         thinkingBudget: 0,  // 完全禁用thinking
@@ -278,12 +306,12 @@ Use the native function calling mechanism only.`.trim();
     }
 
     if (isFlashModel && hasThinking && hasTools && isStream) {
-      Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + thinking + tools + stream', {
-        model: geminiModel,
-        hasTools,
-        isStream,
-        thinking: claudeRequest.thinking?.type
-      });
+      // Logger.info('ThinkingTransformer', 'Detected problematic combination: FLASH + thinking + tools + stream', {
+      //   model: geminiModel,
+      //   hasTools,
+      //   isStream,
+      //   thinking: claudeRequest.thinking?.type
+      // });
 
       // 对于流式请求，降低thinking预算避免"思考陷阱"
       return {
@@ -297,9 +325,19 @@ Use the native function calling mechanism only.`.trim();
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
-        // 统一所有模型的处理：启用thinking时固定使用-1（动态预算）
+        // 根据官方文档，优先使用Claude指定的budget_tokens
+        let budget: number;
+        if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
+          // Claude官方要求最小1024 tokens，确保预算符合Gemini模型限制
+          budget = Math.min(claudeThinking.budget_tokens, limits.max);
+          budget = Math.max(budget, limits.min);
+        } else {
+          // 未指定预算或预算过小时，使用动态预算
+          budget = -1;
+        }
+
         return {
-          thinkingBudget: -1,  // 固定使用动态预算
+          thinkingBudget: budget,
           includeThoughts: true,
           exposeThoughtsToClient: true,  // 客户端启用thinking时应该暴露
           exposeToClient: true  // 兼容性字段
@@ -311,21 +349,26 @@ Use the native function calling mechanism only.`.trim();
             thinkingBudget: limits.min,
             includeThoughts: false,
             exposeThoughtsToClient: false,
-            exposeToClient: false  // 兼容性字段
+            exposeToClient: false
           };
         }
         return {
           thinkingBudget: 0,
           includeThoughts: false,
           exposeThoughtsToClient: false,
-          exposeToClient: false  // 兼容性字段
+          exposeToClient: false
         };
       }
     }
 
-    // 默认情况：客户端未明确启用thinking，使用固定预算128
+    // 默认情况：客户端未明确启用thinking
+    // 根据官方文档建议，对于中等复杂度任务使用适中的预算
+    const complexity = this.analyzeComplexity(claudeRequest);
+    const defaultBudget = complexity.score > this.complexityThresholds.medium ?
+      Math.min(2048, limits.max) : Math.min(512, limits.max);
+
     return {
-      thinkingBudget: 128,  // 客户端未启用推理时使用固定预算128
+      thinkingBudget: Math.max(defaultBudget, limits.min),
       includeThoughts: true,  // 启用thinking以提升响应质量
       exposeThoughtsToClient: false,  // 不暴露给客户端
       exposeToClient: false  // 兼容性字段
@@ -603,23 +646,53 @@ Use the native function calling mechanism only.`.trim();
   }
 
   /**
-   * 创建思考配置模板 (符合Gemini API格式)
+   * 创建思考配置模板
+   * 基于官方文档要求，确保配置符合Gemini API格式
+   *
+   * 官方要点：
+   * - 支持动态thinking (-1)
+   * - 正确设置exposeThoughtsToClient
+   * - 考虑模型兼容性
    */
   static createThinkingConfig(
     enabled: boolean,
     budget?: number,
-    exposeToClient: boolean = false  // 默认不暴露给客户端
+    exposeToClient: boolean = false,
+    geminiModel?: string,
+    maxTokens?: number
   ): ThinkingConfig | null {
     if (!enabled) {
       return {
-        thinkingBudget: 0 // 设为0禁用thinking
+        thinkingBudget: 0,
+        includeThoughts: false,
+        exposeThoughtsToClient: false,
+        exposeToClient: false
       };
     }
 
-    return {
-      thinkingBudget: budget || this.defaultBudget,
-      exposeThoughtsToClient: exposeToClient
+    let finalBudget = budget || this.defaultBudget;
+    let warnings: string[] = [];
+
+    // 如果提供了模型信息，进行预算验证
+    if (geminiModel && maxTokens) {
+      const result = this.validateAndAdjustBudget(finalBudget, maxTokens, geminiModel);
+      finalBudget = result.budget;
+      warnings = result.warnings;
+    }
+
+    const config: ThinkingConfig = {
+      thinkingBudget: finalBudget,
+      includeThoughts: true,
+      exposeThoughtsToClient: exposeToClient,
+      exposeToClient: exposeToClient
     };
+
+    // 记录警告信息（在实际应用中可能需要日志记录）
+    if (warnings.length > 0) {
+      // console.warn('ThinkingConfig warnings:', warnings);
+    }
+
+    return config;
   }
 
   /**
@@ -654,13 +727,24 @@ Use the native function calling mechanism only.`.trim();
   }
 
   /**
-   * 生成thinking签名 - 恢复自Node.js版本
-   * 用于标识和追踪thinking内容
+   * 生成thinking签名
+   * 基于官方文档要求：用于标识和追踪thinking内容，支持多轮对话上下文维护
+   *
+   * 官方文档要点：
+   * - 签名用于维持多轮交互中的上下文
+   * - 不要将带签名的部分连接在一起
+   * - 需要返回完整的前一响应和签名
    */
-  static generateThinkingSignature(thinkingContent: string): string {
+  static generateThinkingSignature(
+    thinkingContent: string,
+    contextId?: string,
+    turnNumber?: number
+  ): string {
     const timestamp = Date.now().toString(36);
     const hash = this.simpleHash(thinkingContent);
-    return `sig_${hash}_${timestamp}`;
+    const context = contextId ? `_ctx${contextId.substring(0, 8)}` : '';
+    const turn = turnNumber ? `_t${turnNumber}` : '';
+    return `sig_${hash}_${timestamp}${context}${turn}`;
   }
 
   /**
@@ -677,18 +761,41 @@ Use the native function calling mechanism only.`.trim();
   }
 
   /**
-   * 处理thinking内容块 - 恢复自Node.js版本
+   * 处理thinking内容块
+   * 基于官方文档：正确处理思考内容的签名和暴露逻辑
+   *
+   * 官方要点：
+   * - Claude 4 模型返回摘要化的thinking输出
+   * - 使用工具时，必须传回完整、未修改的thinking块
+   * - 思考块会自动从上下文中移除（前一轮）
    */
   static processThinkingContent(
     thinkingText: string,
-    exposeToClient: boolean
+    exposeToClient: boolean,
+    contextId?: string,
+    turnNumber?: number,
+    isStreamingResponse: boolean = false
   ): any | null {
-    if (!exposeToClient || !thinkingText) return null;
+    if (!thinkingText) return null;
+
+    const signature = this.generateThinkingSignature(thinkingText, contextId, turnNumber);
+
+    // 根据官方文档，只在exposeToClient为true时返回thinking内容
+    if (!exposeToClient) {
+      // 即使不暴露给客户端，也要保留签名用于内部追踪
+      return {
+        type: 'thinking',
+        thinking: '', // 不暴露内容
+        signature,
+        internal: true // 标记为内部使用
+      };
+    }
 
     return {
       type: 'thinking',
       thinking: thinkingText,
-      signature: this.generateThinkingSignature(thinkingText)
+      signature,
+      streaming: isStreamingResponse
     };
   }
 
@@ -853,6 +960,61 @@ Use the native function calling mechanism only.`.trim();
 
     return startsWithResponse || (hasNoThinkingProcess && isShortStatement);
   }
+  /**
+   * 验证并调整thinking预算
+   * 基于官方文档要求确保预算符合模型限制
+   *
+   * Claude: 最小1024 tokens, 必须小于max_tokens
+   * Gemini: 各模型有不同的范围限制
+   */
+  static validateAndAdjustBudget(
+    requestedBudget: number,
+    maxTokens: number,
+    geminiModel: string
+  ): { budget: number; warnings: string[] } {
+    const warnings: string[] = [];
+    const limits = this.THINKING_LIMITS[geminiModel];
+
+    if (!limits) {
+      warnings.push(`Model ${geminiModel} does not support thinking`);
+      return { budget: 0, warnings };
+    }
+
+    let adjustedBudget = requestedBudget;
+
+    // 检查是否违反Claude的最小1024 tokens要求
+    if (adjustedBudget > 0 && adjustedBudget < 1024) {
+      adjustedBudget = 1024;
+      warnings.push('Thinking budget adjusted to minimum 1024 tokens (Claude requirement)');
+    }
+
+    // 检查是否超过模型最大限制
+    if (adjustedBudget > limits.max) {
+      adjustedBudget = limits.max;
+      warnings.push(`Thinking budget adjusted to model maximum ${limits.max} tokens`);
+    }
+
+    // 检查是否低于模型最小限制
+    if (adjustedBudget > 0 && adjustedBudget < limits.min) {
+      adjustedBudget = limits.min;
+      warnings.push(`Thinking budget adjusted to model minimum ${limits.min} tokens`);
+    }
+
+    // Claude官方要求：thinking预算必须小于max_tokens
+    if (adjustedBudget >= maxTokens) {
+      adjustedBudget = Math.max(limits.min, maxTokens - 100);
+      warnings.push('Thinking budget adjusted to be less than max_tokens (Claude requirement)');
+    }
+
+    // 检查是否尝试禁用不可禁用的模型
+    if (adjustedBudget === 0 && !limits.canDisable) {
+      adjustedBudget = limits.min;
+      warnings.push(`Model ${geminiModel} cannot disable thinking, using minimum budget`);
+    }
+
+    return { budget: adjustedBudget, warnings };
+  }
+
   static validateThinkingConfig(config: ThinkingConfig | null): {
     isValid: boolean;
     errors: string[];
@@ -891,28 +1053,63 @@ Use the native function calling mechanism only.`.trim();
 
   /**
    * 验证thinking签名
+   * 支持新的签名格式：包含上下文和轮数信息
    */
   static validateThinkingSignature(signature: string): boolean {
     if (!signature) return false;
 
-    // 签名格式: sig_[hash]_[timestamp]
-    const pattern = /^sig_[a-z0-9]{1,8}_[a-z0-9]+$/;
-    return pattern.test(signature);
+    // 新签名格式: sig_[hash]_[timestamp]_ctx[contextId]_t[turnNumber] (可选部分)
+    // 或旧格式: sig_[hash]_[timestamp]
+    const newPattern = /^sig_[a-z0-9]{1,8}_[a-z0-9]+(?:_ctx[a-z0-9]{1,8})?(?:_t\d+)?$/;
+    const oldPattern = /^sig_[a-z0-9]{1,8}_[a-z0-9]+$/;
+
+    return newPattern.test(signature) || oldPattern.test(signature);
   }
 
   /**
-   * 从签名中提取时间戳
+   * 从签名中提取时间戳和元信息
+   * 支持新的签名格式解析
    */
-  static extractTimestampFromSignature(signature: string): number | null {
-    if (!this.validateThinkingSignature(signature)) return null;
+  static extractSignatureInfo(signature: string): {
+    timestamp: number | null;
+    contextId: string | null;
+    turnNumber: number | null;
+    hash: string | null;
+  } {
+    if (!this.validateThinkingSignature(signature)) {
+      return { timestamp: null, contextId: null, turnNumber: null, hash: null };
+    }
 
     const parts = signature.split('_');
-    if (parts.length !== 3) return null;
+    if (parts.length < 3) {
+      return { timestamp: null, contextId: null, turnNumber: null, hash: null };
+    }
+
+    const hash = parts[1] || null;
+    let timestamp: number | null = null;
+    let contextId: string | null = null;
+    let turnNumber: number | null = null;
 
     try {
-      return parseInt(parts[2], 36);
+      timestamp = parseInt(parts[2], 36);
     } catch {
-      return null;
+      // ignore
     }
+
+    // 解析可选的上下文ID和轮数
+    for (let i = 3; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.startsWith('ctx')) {
+        contextId = part.substring(3);
+      } else if (part.startsWith('t')) {
+        try {
+          turnNumber = parseInt(part.substring(1), 10);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    return { timestamp, contextId, turnNumber, hash };
   }
 }

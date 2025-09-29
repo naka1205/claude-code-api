@@ -104,8 +104,16 @@ export type ClaudeToolChoice =
       name?: string;
     };
 
+/**
+ * Claude Extended Thinking 配置
+ * 基于官方文档: https://docs.claude.com/en/docs/build-with-claude/extended-thinking
+ */
 export interface ClaudeThinking {
+  /** thinking类型 */
   type: 'enabled' | 'disabled';
+  /** 思考预算token数
+   * 官方要求：最小1024 tokens，必须小于max_tokens
+   */
   budget_tokens?: number;
 }
 
@@ -149,11 +157,21 @@ export interface ClaudeTextBlock {
 
 /**
  * Claude 思考内容块 - Extended Thinking支持
+ * 基于官方文档：支持签名、上下文和流式响应
  */
 export interface ClaudeThinkingBlock {
   type: 'thinking';
   thinking: string;
-  signature?: string; // 思考内容的签名验证
+  /** 思考内容的签名验证，用于多轮对话上下文维护 */
+  signature?: string;
+  /** 是否为流式响应中的部分内容 */
+  streaming?: boolean;
+  /** 上下文ID，用于多轮对话追踪 */
+  contextId?: string;
+  /** 轮数，用于多轮对话追踪 */
+  turnNumber?: number;
+  /** 内部使用标记，不暴露给客户端 */
+  internal?: boolean;
 }
 
 /**

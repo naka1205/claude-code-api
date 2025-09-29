@@ -10,10 +10,15 @@ export type GeminiRole = 'user' | 'model' | 'system' | 'tool';
 
 /**
  * Gemini 文本部分
+ * 基于官方文档：支持thinking标记
  */
 export interface GeminiTextPart {
   text: string;
-  thought?: boolean;  // Gemini 2.5 thinking 标记
+  /** Gemini 2.5 thinking 标记
+   * 官方文档：用于标识思考内容部分
+   * 不要将带有thought: true的部分连接在一起
+   */
+  thought?: boolean;
 }
 
 /**
@@ -65,6 +70,7 @@ export interface GeminiContent {
 
 /**
  * Gemini 生成配置
+ * 基于官方文档: https://ai.google.dev/gemini-api/docs/thinking
  */
 export interface GeminiGenerationConfig {
   temperature?: number;
@@ -77,8 +83,15 @@ export interface GeminiGenerationConfig {
   frequencyPenalty?: number;
   responseMimeType?: string;
   responseSchema?: any;
+  /** Gemini 2.5 Thinking 配置
+   * 官方文档要点：
+   * - thinkingBudget: -1表示动态预算，0表示禁用
+   * - includeThoughts: 是否包含思考内容在响应中
+   */
   thinkingConfig?: {
+    /** 思考预算：-1(动态) | 0(禁用) | 正整数(固定预算) */
     thinkingBudget?: number;
+    /** 是否在响应中包含思考内容 */
     includeThoughts?: boolean;
   };
 }
