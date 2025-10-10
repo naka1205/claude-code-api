@@ -360,7 +360,7 @@ export class StreamTransformer {
         try {
           // 辅助函数:发送SSE事件并记录日志
           const sendEvent = (eventType: string, data: any) => {
-            const encoded = encoder.encode(`event: ${eventType}\\ndata: ${JSON.stringify(data)}\\n\\n`);
+            const encoded = encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
             controller.enqueue(encoded);
             if (requestId) {
               Logger.logClaudeEvent(requestId, eventType, data);
@@ -418,12 +418,14 @@ export class StreamTransformer {
                   } as ClaudeResponse
                 };
 
-                controller.enqueue(encoder.encode(`event: message_start\\ndata: ${JSON.stringify(messageStart)}\\n\\n`));
+                sendEvent('message_start', messageStart);
               }
 
               // 处理文本内容和工具调用
               if (geminiChunk.candidates?.[0]?.content?.parts) {
                 for (const part of geminiChunk.candidates[0].content.parts) {
+                  if (streamFinished) break;
+
                   // 处理文本内容 - 排除带thought标记和functionCall的part
                   if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
                     // 检查文本中是否包含错误输出的functionCall JSON
@@ -435,7 +437,7 @@ export class StreamTransformer {
                           type: 'content_block_stop',
                           index: 0
                         };
-                        controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(blockStop)}\\n\\n`));
+                        sendEvent('content_block_stop', blockStop);
                         textBlockStarted = false;
                         currentBlockIndex++;
                       }
@@ -452,7 +454,7 @@ export class StreamTransformer {
                           input: {}
                         } as any
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(toolUseStart)}\\n\\n`));
+                      sendEvent('content_block_start', toolUseStart);
 
                       // 发送input delta
                       const inputDelta: ClaudeStreamEvent = {
@@ -463,14 +465,14 @@ export class StreamTransformer {
                           partial_json: JSON.stringify(extractedCall.args)
                         }
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(inputDelta)}\\n\\n`));
+                      sendEvent('content_block_delta', inputDelta);
 
                       // 关闭tool_use block
                       const toolUseStop: ClaudeStreamEvent = {
                         type: 'content_block_stop',
                         index: currentBlockIndex
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(toolUseStop)}\\n\\n`));
+                      sendEvent('content_block_stop', toolUseStop);
 
                       currentBlockIndex++;
                       continue;
@@ -486,7 +488,7 @@ export class StreamTransformer {
                           index: 0,
                           content_block: { type: 'text', text: '' } as ClaudeTextBlock
                         };
-                        controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(blockStart)}\\n\\n`));
+                        sendEvent('content_block_start', blockStart);
                       }
 
                       const delta: ClaudeStreamEvent = {
@@ -494,7 +496,7 @@ export class StreamTransformer {
                         index: 0,
                         delta: { type: 'text_delta', text: incrementalText }
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(delta)}\\n\\n`));
+                      sendEvent('content_block_delta', delta);
                       currentTextContent += incrementalText;
                     }
                   }
@@ -516,7 +518,7 @@ export class StreamTransformer {
                           type: 'content_block_stop',
                           index: thinkingBlockIndex
                         };
-                        controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
+                        sendEvent('content_block_stop', thinkingBlockStop);
                         thinkingBlockStarted = false;
                       }
 
@@ -532,7 +534,7 @@ export class StreamTransformer {
                             index: 0,
                             content_block: { type: 'text', text: '' }
                           };
-                          controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(blockStart)}\\n\\n`));
+                          sendEvent('content_block_start', blockStart);
                         }
 
                         const delta: ClaudeStreamEvent = {
@@ -540,7 +542,7 @@ export class StreamTransformer {
                           index: 0,
                           delta: { type: 'text_delta', text: incrementalText }
                         };
-                        controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(delta)}\\n\\n`));
+                        sendEvent('content_block_delta', delta);
                         currentTextContent += incrementalText;
                       }
                     } else {
@@ -563,7 +565,7 @@ export class StreamTransformer {
                               signature: 'sig_pending' // 临时signature
                             } as ClaudeThinkingBlock
                           };
-                          controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(thinkingBlockStart)}\\n\\n`));
+                          sendEvent('content_block_start', thinkingBlockStart);
                           currentBlockIndex++;
 
                           // 发送thinking内容
@@ -572,7 +574,7 @@ export class StreamTransformer {
                             index: thinkingBlockIndex,
                             delta: { type: 'thinking_delta', thinking: thinkingText }
                           };
-                          controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(thinkingDelta)}\\n\\n`));
+                          sendEvent('content_block_delta', thinkingDelta);
                         } else {
                           // 后续thinking:Gemini可能累积发送,提取增量
                           if (thinkingText.startsWith(accumulatedThinking)) {
@@ -584,7 +586,7 @@ export class StreamTransformer {
                                 index: thinkingBlockIndex,
                                 delta: { type: 'thinking_delta', thinking: incrementalThinking }
                               };
-                              controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(thinkingDelta)}\\n\\n`));
+                              sendEvent('content_block_delta', thinkingDelta);
                             }
                           } else if (!accumulatedThinking.includes(thinkingText.trim())) {
                             // 全新的thinking段落
@@ -594,7 +596,7 @@ export class StreamTransformer {
                               index: thinkingBlockIndex,
                               delta: { type: 'thinking_delta', thinking: '\n' + thinkingText }
                             };
-                            controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(thinkingDelta)}\\n\\n`));
+                            sendEvent('content_block_delta', thinkingDelta);
                           }
                         }
                       }
@@ -612,7 +614,7 @@ export class StreamTransformer {
                         type: 'content_block_stop',
                         index: thinkingBlockIndex
                       };
-                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
+                      sendEvent('content_block_stop', thinkingBlockStop);
                       thinkingBlockStarted = false; // 标记thinking已结束
                     }
 
@@ -628,7 +630,7 @@ export class StreamTransformer {
 
                     // 结束当前文本块（仅当文本块已开始时）
                     if (textBlockStarted) {
-                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\\n\\n`));
+                      sendEvent('content_block_stop', {type: 'content_block_stop', index: 0});
                       textBlockStarted = false;
                       currentBlockIndex++;
                     }
@@ -641,9 +643,9 @@ export class StreamTransformer {
                       input: args
                     };
 
-                    controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify({type: 'content_block_start', index: currentBlockIndex, content_block: toolUse})}\\n\\n`));
-                    controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify({type: 'content_block_delta', index: currentBlockIndex, delta: {type: 'input_json_delta', partial_json: JSON.stringify(args)}})}\\n\\n`));
-                    controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: currentBlockIndex})}\\n\\n`));
+                    sendEvent('content_block_start', {type: 'content_block_start', index: currentBlockIndex, content_block: toolUse});
+                    sendEvent('content_block_delta', {type: 'content_block_delta', index: currentBlockIndex, delta: {type: 'input_json_delta', partial_json: JSON.stringify(args)}});
+                    sendEvent('content_block_stop', {type: 'content_block_stop', index: currentBlockIndex});
                     currentBlockIndex++;
                   }
                 }
@@ -663,13 +665,13 @@ export class StreamTransformer {
                     type: 'content_block_stop',
                     index: thinkingBlockIndex
                   };
-                  controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
+                  sendEvent('content_block_stop', thinkingBlockStop);
                 }
 
                 // 关键修复: 只在文本块已开始时才结束文本块
                 if (textBlockStarted) {
                   const textBlockIndex = 0; // 文本总是使用index 0
-                  controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: textBlockIndex})}\\n\\n`));
+                  sendEvent('content_block_stop', {type: 'content_block_stop', index: textBlockIndex});
                   textBlockStarted = false;
                 }
 
@@ -683,8 +685,13 @@ export class StreamTransformer {
                   stopInfo = transformStopReason(candidate.finishReason || 'STOP');
                 }
 
-                controller.enqueue(encoder.encode(`event: message_delta\\ndata: ${JSON.stringify({type: 'message_delta', delta: stopInfo, usage: {output_tokens: totalOutputTokens}})}\\n\\n`));
-                controller.enqueue(encoder.encode(`event: message_stop\\ndata: ${JSON.stringify({type: 'message_stop'})}\\n\\n`));
+                sendEvent('message_delta', {type: 'message_delta', delta: stopInfo, usage: {output_tokens: totalOutputTokens}});
+                sendEvent('message_stop', {type: 'message_stop'});
+
+                // 正确关闭流
+                controller.terminate();
+                // 终止处理当前chunk中的后续行
+                break;
               }
             } catch (e) {
               // 简化错误处理
@@ -699,7 +706,7 @@ export class StreamTransformer {
               message: error instanceof Error ? error.message : 'Stream processing error'
             }
           };
-          controller.enqueue(encoder.encode(`event: error\\ndata: ${JSON.stringify(errorEvent)}\\n\\n`));
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`));
         }
       },
 
@@ -708,13 +715,13 @@ export class StreamTransformer {
         if (messageStarted && !streamFinished) {
           // 结束thinking block（如果存在）
           if (thinkingBlockStarted) {
-            controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: thinkingBlockIndex})}\\n\\n`));
+            controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({type: 'content_block_stop', index: thinkingBlockIndex})}\n\n`));
           }
 
           // 结束文本block
-          controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\\n\\n`));
-          controller.enqueue(encoder.encode(`event: message_delta\\ndata: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}\\n\\n`));
-          controller.enqueue(encoder.encode(`event: message_stop\\ndata: ${JSON.stringify({type: 'message_stop'})}\\n\\n`));
+          controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\n\n`));
+          controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}\n\n`));
+          controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({type: 'message_stop'})}\n\n`));
         }
       }
     });
