@@ -8,6 +8,7 @@ import { ContentTransformer } from './content-transformer';
 
 /**
  * Gemini countTokens 请求格式
+ * 注意：Gemini countTokens API 不支持 tools 字段
  */
 export interface GeminiCountTokensRequest {
   contents: Array<{
@@ -80,6 +81,10 @@ export class CountTokensTransformer {
         };
       }
     }
+
+    // 注意：Gemini countTokens API 不支持 tools 字段
+    // Claude API 的 tools 参数在 Gemini 中无法直接计算 token
+    // 如果需要包含 tools 的准确 token 计数，需要使用完整的 generateContent API
 
     return geminiRequest;
   }
