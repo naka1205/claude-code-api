@@ -302,19 +302,21 @@ export class ContentTransformer {
 
     // 第一轮：按照Gemini的标记分类内容
     for (const part of parts) {
-      // 处理标记为thought的内容或包含thoughtSignature的内容
-      if (('thought' in part && 'text' in part) || ('thoughtSignature' in part && 'text' in part)) {
+      // 处理标记为thought的内容 (不包括仅有thoughtSignature的part)
+      // thoughtSignature单独出现时表示thinking阶段结束,不是thinking内容本身
+      if ('thought' in part && 'text' in part && (part as any).thought === true && (part as any).text) {
         thinkingParts.push((part as any).text);
         continue;
       }
 
-      // 处理普通文本内容
-      if ('text' in part && part.text !== undefined && !('thought' in part)) {
+      // 普通文本内容 - 与流式处理保持一致的过滤条件
+      // 排除thought标记、functionCall,并检查text真值
+      if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
         textParts.push(part.text);
         continue;
       }
 
-      // 处理工具调用
+      // 处理工具调用 (可能包含thoughtSignature作为结束标记)
       if ('functionCall' in part && part.functionCall) {
         const toolHash = this.generateToolCallHash(part.functionCall.name, part.functionCall.args);
 
@@ -344,28 +346,29 @@ export class ContentTransformer {
       }
     }
 
-    // 第二轮：处理thinking内容 - 根据官方文档：保持原始结构，不合并
+    // 第二轮：处理thinking内容
     if (thinkingParts.length > 0) {
-      console.log(`[ContentTransformer] Processing ${thinkingParts.length} thinking parts as separate blocks, expose=${exposeThinkingToClient}`);
+      console.log(`[ContentTransformer] Processing ${thinkingParts.length} thinking parts, expose=${exposeThinkingToClient}`);
 
       if (exposeThinkingToClient) {
-        // 为每个thinking part创建独立的block，保持原始结构并保留Gemini签名
-        thinkingParts.forEach((thinkingText, index) => {
-          // 尝试从原始parts中找到对应的thoughtSignature
-          const originalPart = parts.find(p =>
-            (('thought' in p && 'text' in p) || ('thoughtSignature' in p && 'text' in p)) &&
-            (p as any).text === thinkingText
-          );
-          const originalSignature = originalPart ? (originalPart as any).thoughtSignature : undefined;
+        // 合并所有thinking内容为单个block
+        const combinedThinking = thinkingParts.join('\n\n');
 
-          const thinkingBlock: ClaudeThinkingBlock = {
-            type: 'thinking',
-            thinking: thinkingText,
-            signature: ThinkingTransformer.preserveGeminiThoughtSignature(originalSignature, thinkingText)
-          };
-          blocks.push(thinkingBlock);
-        });
-        console.log(`[ContentTransformer] Created ${thinkingParts.length} separate thinking blocks as per Gemini docs`);
+        // 查找thoughtSignature (在最后一个thinking chunk后的part中)
+        const signaturePart = parts.find(p => 'thoughtSignature' in p);
+        const geminiSignature = signaturePart ? (signaturePart as any).thoughtSignature : undefined;
+
+        const thinkingBlock: ClaudeThinkingBlock = {
+          type: 'thinking',
+          thinking: combinedThinking,
+          // 正确转换Gemini的thoughtSignature为Claude格式
+          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
+            geminiSignature,
+            combinedThinking
+          )
+        };
+        blocks.push(thinkingBlock);
+        console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
       } else {
         // 当thinking不暴露给客户端时，检查是否有response部分
         const combinedThinking = thinkingParts.join('\n\n');
@@ -426,13 +429,13 @@ export class ContentTransformer {
     // Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
 
     // 最终fallback检查：与流式输出保持一致的处理
-    if (blocks.length === 0 && thinkingParts.length > 0 && !exposeThinkingToClient) {
-      // Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
-      blocks.push({
-        type: 'text',
-        text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
-      });
-    }
+    // if (blocks.length === 0 && thinkingParts.length > 0 && !exposeThinkingToClient) {
+    //   // Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
+    //   blocks.push({
+    //     type: 'text',
+    //     text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
+    //   });
+    // }
 
     return blocks;
   }

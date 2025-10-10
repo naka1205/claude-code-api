@@ -16,7 +16,9 @@ import {
   GeminiPart,
   GeminiRole,
   GeminiSystemInstruction,
-  GeminiGenerationConfig
+  GeminiGenerationConfig,
+  GeminiTool,
+  GeminiFunctionDeclaration
 } from '../types/gemini';
 import { ModelMapper } from '../models';
 import { ContentTransformer } from './content-transformer';
@@ -125,10 +127,6 @@ export class RequestTransformer {
       // 处理系统消息
       let systemInstruction = claudeRequest.system ? this.transformSystemMessage(claudeRequest.system) : null;
 
-      if (systemInstruction) {
-        geminiRequest.systemInstruction = systemInstruction;
-      }
-
       // 9. 处理工具
       if (claudeRequest.tools && claudeRequest.tools.length > 0) {
         try {
@@ -173,6 +171,15 @@ export class RequestTransformer {
           });
           // 继续处理，不让工具转换失败影响整个请求
         }
+      }
+
+      // 增强systemInstruction以明确工具调用格式
+      if (systemInstruction && geminiRequest.tools && geminiRequest.tools.length > 0) {
+        systemInstruction = this.enhanceSystemInstructionForTools(systemInstruction, geminiRequest.tools);
+      }
+
+      if (systemInstruction) {
+        geminiRequest.systemInstruction = systemInstruction;
       }
 
       // 10. 处理特殊工具（WebSearch, WebFetch）
@@ -353,6 +360,60 @@ export class RequestTransformer {
     return {
       role: 'system',
       parts: [{ text }]
+    };
+  }
+
+  /**
+   * 增强系统指令以明确工具调用格式
+   * 解决Gemini将工具调用误解为Python代码的问题
+   */
+  private static enhanceSystemInstructionForTools(
+    systemInstruction: GeminiSystemInstruction,
+    tools: GeminiTool[]
+  ): GeminiSystemInstruction {
+    const originalText = systemInstruction.parts[0].text;
+
+    // 提取工具名称列表
+    const toolNames: string[] = [];
+    tools.forEach(tool => {
+      if (tool.functionDeclarations) {
+        tool.functionDeclarations.forEach((func: GeminiFunctionDeclaration) => {
+          toolNames.push(func.name);
+        });
+      }
+    });
+
+    if (toolNames.length === 0) {
+      return systemInstruction;
+    }
+
+    // 构建工具调用格式说明
+    const toolInstructions = `
+
+# IMPORTANT: Function Calling Instructions
+
+You have access to the following functions: ${toolNames.join(', ')}
+
+When you need to call a function:
+1. DO NOT generate Python code like "print(default_api.TodoWrite(...))"
+2. DO NOT treat function calls as code execution
+3. Instead, use the native function calling mechanism by returning a structured function call
+
+For example, when using TodoWrite:
+- CORRECT: Return a function call with proper JSON parameters
+- WRONG: print(default_api.TodoWrite(...)) or any Python-like syntax
+
+All function parameters must be valid JSON values:
+- Strings must be actual text, NOT boolean values like "true" or "false"
+- For TodoWrite's activeForm field: use descriptive "-ing" verb phrases like "Creating file", "Running tests"
+- For TodoWrite's content field: use imperative statements like "Create file", "Run tests"
+- For TodoWrite's status field: use exactly "pending", "in_progress", or "completed"
+
+Remember: You are calling functions, not writing Python code.`;
+
+    return {
+      role: 'system',
+      parts: [{ text: originalText + toolInstructions }]
     };
   }
 

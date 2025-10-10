@@ -81,9 +81,7 @@ export class ToolTransformer {
     if (convertedTools.length > 0) {
       const functionDeclarations: GeminiFunctionDeclaration[] = convertedTools.map(tool => ({
         name: tool.name,
-        // 优化：传递工具名以支持特定工具的硬编码描述
-        description: this.sanitizeDescription(tool.description || `${tool.name} tool`, tool.name),
-        // 传递工具名称以支持特定工具的schema增强
+        description: tool.description || `${tool.name} tool`,
         parameters: this.convertInputSchema(tool.input_schema || { type: 'object', properties: {} }, tool.name)
       }));
 
@@ -111,10 +109,10 @@ export class ToolTransformer {
    * 转换工具选择配置
    */
   static convertToolChoice(
-    toolChoice: ClaudeToolChoice,
+    toolChoice: ClaudeToolChoice | undefined,
     tools: ClaudeTool[]
   ): GeminiToolConfig | null {
-    if (!toolChoice || !tools || tools.length === 0) {
+    if (!tools || tools.length === 0) {
       return null;
     }
 
@@ -123,6 +121,16 @@ export class ToolTransformer {
     if (hasOfficialWebSearch) {
       return null;
     }
+
+    // 如果没有指定toolChoice,默认使用AUTO模式以启用函数调用
+    if (!toolChoice) {
+      return {
+        functionCallingConfig: {
+          mode: 'AUTO'
+        }
+      };
+    }
+
     if (typeof toolChoice === 'string') {
       switch (toolChoice) {
         case 'auto':
@@ -438,85 +446,6 @@ export class ToolTransformer {
     }
 
     return filtered;
-  }
-
-  /**
-   * 清理工具描述，根据Gemini官方文档优化
-   * 文档强调：要"extremely clear and specific"
-   *
-   * 特殊处理:为易出错的工具(如TodoWrite)提供硬编码的优化描述
-   */
-  static sanitizeDescription(description: string, toolName?: string): string {
-    // 为特定工具提供硬编码的精简描述,避免超长描述导致关键信息被截断
-    const optimizedDescriptions: Record<string, string> = {
-      'TodoWrite': `Create and manage a task list for coding sessions. Track progress of multi-step tasks.
-
-**Parameters:**
-- todos: Array of task objects, each with:
-  * content: Imperative form describing the task (e.g., "Run tests", "Create file")
-  * status: One of "pending" | "in_progress" | "completed"
-  * activeForm: Present continuous verb phrase (e.g., "Running tests", "Creating file"). MUST be descriptive "-ing" form, NOT boolean values like "true" or "false"
-
-**When to use:**
-- Complex tasks requiring 3+ steps
-- Tasks with multiple operations
-- User explicitly requests task tracking
-
-**When NOT to use:**
-- Single, trivial tasks
-- Purely informational queries`,
-
-      'NotebookEdit': `Edit Jupyter notebook (.ipynb) cells. Replace, insert, or delete cells.
-
-**Parameters:**
-- notebook_path: Absolute path to .ipynb file
-- cell_id: ID of cell to edit
-- new_source: New cell content
-- cell_type: "code" or "markdown"
-- edit_mode: "replace" | "insert" | "delete"`,
-
-      'Task': `Launch specialized agents for complex multi-step tasks.
-
-**Available agents:**
-- general-purpose: Research, search code, multi-step tasks
-- statusline-setup: Configure status line settings
-- output-style-setup: Create output styles
-
-**Usage:**
-Include task description, agent type, and expected output format.`
-    };
-
-    // 如果有优化的硬编码描述,直接使用
-    if (toolName && optimizedDescriptions[toolName]) {
-      return optimizedDescriptions[toolName];
-    }
-
-    // 通用描述清理逻辑
-    // 保持描述的清晰度，但限制长度避免过于冗长
-    let cleanDesc = description
-      // 保留有意义的标点和格式
-      .replace(/[^\w\s\-.,!?():\n"'/]/g, ' ')
-      // 清理多余空白，但保留换行
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n\s*\n/g, '\n')
-      .trim();
-
-    // // 如果描述过长，智能截断但保持完整性
-    if (cleanDesc.length > 800) {
-      // console.log('cleanDesc', cleanDesc)
-      // 在句号或换行处截断，保持语义完整性
-      const truncateAt = cleanDesc.lastIndexOf('.', 800) ||
-                         cleanDesc.lastIndexOf('\n', 800) ||
-                         800;
-      cleanDesc = cleanDesc.substring(0, truncateAt);
-      if (!cleanDesc.endsWith('.')) {
-        cleanDesc += '.';
-      }
-
-      // console.log('truncateAt', cleanDesc)
-    }
-
-    return cleanDesc;
   }
 
 }
