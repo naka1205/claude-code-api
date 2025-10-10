@@ -651,47 +651,52 @@ export class StreamTransformer {
                 }
               }
 
-              // 检查是否完成 - 关键修复: finishReason标记响应轮次结束
-              if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
-                streamFinished = true;
-                const candidate = geminiChunk.candidates[0];
+              // 检查是否完成 - 重构此逻辑以确保处理完所有 part
+              const candidate = geminiChunk.candidates?.[0];
+              const finishReason = candidate?.finishReason;
 
-                // 根据finishMessage判断响应类型
-                const isToolCall = candidate.finishMessage === "Model generated function call(s).";
+              if (finishReason && !streamFinished) {
+                streamFinished = true; // 标记流已结束
 
-                // 结束thinking block（如果仍在进行中且未被thoughtSignature结束）
-                if (thinkingBlockStarted && exposeThinkingToClient) {
-                  const thinkingBlockStop: ClaudeStreamEvent = {
-                    type: 'content_block_stop',
-                    index: thinkingBlockIndex
+                // 检查是否只生成了思考内容
+                if (
+                  ['STOP', 'MAX_TOKENS'].includes(finishReason.toUpperCase()) &&
+                  !textBlockStarted &&
+                  thinkingBlockIndex !== -1
+                ) {
+                  const warningMessage =
+                    "The model's response was stopped prematurely, possibly due to output token limits. Only internal thinking processes were generated. Please consider increasing the max_tokens limit.";
+                  const errorEvent: ClaudeStreamEvent = {
+                    type: 'error',
+                    error: {
+                      type: 'overloaded_error',
+                      message: warningMessage,
+                    },
                   };
-                  sendEvent('content_block_stop', thinkingBlockStop);
-                }
-
-                // 关键修复: 只在文本块已开始时才结束文本块
-                if (textBlockStarted) {
-                  const textBlockIndex = 0; // 文本总是使用index 0
-                  sendEvent('content_block_stop', {type: 'content_block_stop', index: textBlockIndex});
-                  textBlockStarted = false;
-                }
-
-                totalOutputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || Math.floor(currentTextContent.length / 4);
-
-                // 根据finishReason和finishMessage组合判断stop_reason
-                let stopInfo;
-                if (isToolCall) {
-                  stopInfo = { stop_reason: 'tool_use' };
+                  sendEvent('error', errorEvent);
                 } else {
-                  stopInfo = transformStopReason(candidate.finishReason || 'STOP');
+                  // 正常结束流程
+                  if (thinkingBlockStarted && exposeThinkingToClient) {
+                    sendEvent('content_block_stop', { type: 'content_block_stop', index: thinkingBlockIndex });
+                  }
+                  if (textBlockStarted) {
+                    sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
+                  }
+
+                  totalOutputTokens =
+                    geminiChunk.usageMetadata?.candidatesTokenCount || Math.floor(currentTextContent.length / 4);
+                  const stopInfo = transformStopReason(finishReason || 'STOP');
+
+                  sendEvent('message_delta', {
+                    type: 'message_delta',
+                    delta: stopInfo,
+                    usage: { output_tokens: totalOutputTokens },
+                  });
+                  sendEvent('message_stop', { type: 'message_stop' });
                 }
 
-                sendEvent('message_delta', {type: 'message_delta', delta: stopInfo, usage: {output_tokens: totalOutputTokens}});
-                sendEvent('message_stop', {type: 'message_stop'});
-
-                // 正确关闭流
                 controller.terminate();
-                // 终止处理当前chunk中的后续行
-                break;
+                break; // 终止处理
               }
             } catch (e) {
               // 简化错误处理

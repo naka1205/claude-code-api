@@ -312,7 +312,16 @@ export class RequestTransformer {
         });
       }
 
-      const parts = await ContentTransformer.transformContent(processedContent);
+      // 如果是assistant角色且包含工具调用，则只处理工具调用部分
+      let contentToTransform = message.content;
+      if (message.role === 'assistant' && Array.isArray(message.content)) {
+        const hasToolUse = message.content.some((item: any) => item.type === 'tool_use');
+        if (hasToolUse) {
+          contentToTransform = message.content.filter((item: any) => item.type === 'tool_use');
+        }
+      }
+
+      const parts = await ContentTransformer.transformContent(contentToTransform);
 
       // 映射角色 - 处理包括tool角色
       let role: GeminiRole;
