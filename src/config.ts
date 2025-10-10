@@ -74,7 +74,7 @@ const DEFAULT_CONFIG: Config = {
     port: SERVER_DEFAULTS.PORT,
     host: SERVER_DEFAULTS.HOST,
     corsEnabled: true,
-    timeout: TIMEOUTS.DEFAULT,
+    timeout: TIMEOUTS.STREAM,
     enableValidation: true
   },
   gemini: {

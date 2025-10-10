@@ -387,29 +387,86 @@ export class RequestTransformer {
       return systemInstruction;
     }
 
-    // 构建工具调用格式说明
+    // 构建工具调用格式说明 - 强化版本
     const toolInstructions = `
 
-# IMPORTANT: Function Calling Instructions
+# ⚠️ CRITICAL: Function Calling Protocol
 
-You have access to the following functions: ${toolNames.join(', ')}
+## Available Functions
+${toolNames.join(', ')}
 
-When you need to call a function:
-1. DO NOT generate Python code like "print(default_api.TodoWrite(...))"
-2. DO NOT treat function calls as code execution
-3. Instead, use the native function calling mechanism by returning a structured function call
+## Mandatory Function Calling Rules
 
-For example, when using TodoWrite:
-- CORRECT: Return a function call with proper JSON parameters
-- WRONG: print(default_api.TodoWrite(...)) or any Python-like syntax
+### ❌ NEVER DO THIS:
+1. NEVER generate Python code: print(default_api.FunctionName(...))
+2. NEVER use SDK syntax: default_api.FunctionName() or client.function_name()
+3. NEVER treat function calls as code execution or print statements
+4. NEVER wrap function calls in any programming language syntax
 
-All function parameters must be valid JSON values:
-- Strings must be actual text, NOT boolean values like "true" or "false"
-- For TodoWrite's activeForm field: use descriptive "-ing" verb phrases like "Creating file", "Running tests"
-- For TodoWrite's content field: use imperative statements like "Create file", "Run tests"
-- For TodoWrite's status field: use exactly "pending", "in_progress", or "completed"
+### ✅ ALWAYS DO THIS:
+1. Use the NATIVE Gemini function calling mechanism
+2. Return structured function calls directly through the API interface
+3. Provide pure JSON-compatible parameters only
 
-Remember: You are calling functions, not writing Python code.`;
+## Function Call Format Examples
+
+### TodoWrite Function
+CORRECT FORMAT (what Gemini expects):
+{
+  "functionCall": {
+    "name": "TodoWrite",
+    "args": {
+      "todos": [
+        {
+          "content": "Create file",
+          "activeForm": "Creating file",
+          "status": "pending"
+        }
+      ]
+    }
+  }
+}
+
+WRONG FORMAT (will cause MALFORMED_FUNCTION_CALL error):
+❌ print(default_api.TodoWrite(todos=[...]))
+❌ default_api.TodoWrite(todos=[...])
+❌ client.todo_write(todos=[...])
+❌ TodoWrite(todos=[...])
+
+## Parameter Validation Rules
+
+1. **All parameters must be pure JSON types**:
+   - Strings: "text content" (NOT code references)
+   - Numbers: 123 (NOT string numbers like "123")
+   - Booleans: true/false (NOT strings "true"/"false")
+   - Arrays: [...] (NOT Python lists)
+   - Objects: {...} (NOT Python dicts)
+
+2. **TodoWrite specific rules**:
+   - content: Imperative verb phrase (e.g., "Run tests", "Create file", "Fix bug")
+   - activeForm: Present continuous "-ing" form (e.g., "Running tests", "Creating file", "Fixing bug")
+   - status: EXACTLY one of: "pending", "in_progress", "completed"
+
+3. **String values must be descriptive text**:
+   - CORRECT: "Creating authentication module"
+   - WRONG: "true", "false", "None", "undefined"
+
+## Function Calling Mental Model
+
+Think of this as making an API call, NOT writing code:
+- You are the CLIENT sending a structured request
+- The function is executed by the SERVER (not by you)
+- Your output is a DATA structure, NOT executable code
+
+When you decide to use a function:
+1. Identify the function name from the available list
+2. Prepare the parameters as a pure JSON object
+3. Return the function call through Gemini's native mechanism
+4. The execution happens automatically - you don't invoke it
+
+## Critical Reminder
+YOU ARE USING GEMINI'S FUNCTION CALLING API, NOT WRITING PYTHON CODE.
+If you generate any Python-like syntax for function calls, it will be rejected as MALFORMED_FUNCTION_CALL.`;
 
     return {
       role: 'system',

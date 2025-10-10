@@ -138,18 +138,18 @@ export class ThinkingTransformer {
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
         // 根据官方文档，优先使用Claude指定的budget_tokens
-        // let budget: number;
-        // if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
-        //   // Claude官方要求最小1024 tokens，确保预算符合Gemini模型限制
-        //   budget = Math.min(claudeThinking.budget_tokens, limits.max);
-        //   budget = Math.max(budget, limits.min);
-        // } else {
-        //   // 未指定预算或预算过小时，使用动态预算
-        //   budget = -1;
-        // }
+        let budget: number;
+        if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
+          // Claude官方要求最小1024 tokens，确保预算符合Gemini模型限制
+          budget = Math.min(claudeThinking.budget_tokens, limits.max);
+          budget = Math.max(budget, limits.min);
+        } else {
+          // 未指定预算或预算过小时，使用动态预算
+          budget = -1;
+        }
 
         return {
-          thinkingBudget: 128,
+          thinkingBudget: budget,
           includeThoughts: true,
           exposeThoughtsToClient: true,
           exposeToClient: true
