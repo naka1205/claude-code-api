@@ -265,6 +265,43 @@ export class StreamTransformer {
   }
 
   /**
+   * 检测并提取文本中的functionCall JSON
+   * 这是Gemini的一个bug:有时会将function call以JSON代码块形式输出到文本中
+   * @returns 提取的functionCall对象,如果没有则返回null
+   */
+  private static extractFunctionCallFromText(text: string): { name: string; args: any } | null {
+    try {
+      // 尝试提取JSON代码块格式: ```json ... ```
+      const jsonBlockMatch = text.match(/```json\s*\n?\s*(\{[\s\S]*?"functionCall"[\s\S]*?\})\s*\n?\s*```/i);
+      if (jsonBlockMatch) {
+        const jsonObj = JSON.parse(jsonBlockMatch[1]);
+        if (jsonObj.functionCall) {
+          return {
+            name: jsonObj.functionCall.name,
+            args: jsonObj.functionCall.args || {}
+          };
+        }
+      }
+
+      // 尝试提取直接JSON对象格式
+      const directJsonMatch = text.match(/^\s*(\{\s*"functionCall"\s*:\s*\{[\s\S]*?\}\s*\})\s*$/);
+      if (directJsonMatch) {
+        const jsonObj = JSON.parse(directJsonMatch[1]);
+        if (jsonObj.functionCall) {
+          return {
+            name: jsonObj.functionCall.name,
+            args: jsonObj.functionCall.args || {}
+          };
+        }
+      }
+    } catch (e) {
+      // JSON解析失败,返回null
+    }
+
+    return null;
+  }
+
+  /**
    * 创建Gemini到Claude的流转换器 - 优化版本
    */
   static createClaudeStreamTransformer(
@@ -379,6 +416,54 @@ export class StreamTransformer {
                 for (const part of geminiChunk.candidates[0].content.parts) {
                   // 处理文本内容 - 排除带thought标记和functionCall的part
                   if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
+                    // 检查文本中是否包含错误输出的functionCall JSON
+                    const extractedCall = StreamTransformer.extractFunctionCallFromText(part.text);
+                    if (extractedCall) {
+                      // 关闭当前文本块(如果有)
+                      if (currentTextContent !== '') {
+                        const blockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: 0
+                        };
+                        controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(blockStop)}\\n\\n`));
+                      }
+
+                      // 发送tool_use block
+                      const toolUseId = `toolu_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                      const toolUseStart: ClaudeStreamEvent = {
+                        type: 'content_block_start',
+                        index: currentBlockIndex,
+                        content_block: {
+                          type: 'tool_use',
+                          id: toolUseId,
+                          name: extractedCall.name,
+                          input: {}
+                        } as any
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_start\\ndata: ${JSON.stringify(toolUseStart)}\\n\\n`));
+
+                      // 发送input delta
+                      const inputDelta: ClaudeStreamEvent = {
+                        type: 'content_block_delta',
+                        index: currentBlockIndex,
+                        delta: {
+                          type: 'input_json_delta',
+                          partial_json: JSON.stringify(extractedCall.args)
+                        }
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_delta\\ndata: ${JSON.stringify(inputDelta)}\\n\\n`));
+
+                      // 关闭tool_use block
+                      const toolUseStop: ClaudeStreamEvent = {
+                        type: 'content_block_stop',
+                        index: currentBlockIndex
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(toolUseStop)}\\n\\n`));
+
+                      currentBlockIndex++;
+                      continue;
+                    }
+
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (incrementalText) {
                       // 确保文本块已开始

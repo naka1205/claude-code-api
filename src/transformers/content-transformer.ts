@@ -278,6 +278,43 @@ export class ContentTransformer {
   }
 
   /**
+   * 检测并提取文本中的functionCall JSON
+   * 这是Gemini的一个bug:有时会将function call以JSON代码块形式输出到文本中
+   * @returns 提取的functionCall对象,如果没有则返回null
+   */
+  private static extractFunctionCallFromText(text: string): { name: string; args: any } | null {
+    try {
+      // 尝试提取JSON代码块格式: ```json ... ```
+      const jsonBlockMatch = text.match(/```json\s*\n?\s*(\{[\s\S]*?"functionCall"[\s\S]*?\})\s*\n?\s*```/i);
+      if (jsonBlockMatch) {
+        const jsonObj = JSON.parse(jsonBlockMatch[1]);
+        if (jsonObj.functionCall) {
+          return {
+            name: jsonObj.functionCall.name,
+            args: jsonObj.functionCall.args || {}
+          };
+        }
+      }
+
+      // 尝试提取直接JSON对象格式
+      const directJsonMatch = text.match(/^\s*(\{\s*"functionCall"\s*:\s*\{[\s\S]*?\}\s*\})\s*$/);
+      if (directJsonMatch) {
+        const jsonObj = JSON.parse(directJsonMatch[1]);
+        if (jsonObj.functionCall) {
+          return {
+            name: jsonObj.functionCall.name,
+            args: jsonObj.functionCall.args || {}
+          };
+        }
+      }
+    } catch (e) {
+      // JSON解析失败,返回null
+    }
+
+    return null;
+  }
+
+  /**
    * 清空函数调用映射（在新会话开始时调用）
    */
   static clearFunctionCallMap(): void {
@@ -312,6 +349,39 @@ export class ContentTransformer {
       // 普通文本内容 - 与流式处理保持一致的过滤条件
       // 排除thought标记、functionCall,并检查text真值
       if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
+        // 检查文本中是否包含错误输出的functionCall JSON
+        const extractedCall = this.extractFunctionCallFromText(part.text);
+        if (extractedCall) {
+          // 转换为正确的tool_use格式
+          const toolHash = this.generateToolCallHash(extractedCall.name, extractedCall.args);
+
+          if (processedToolCalls.has(toolHash)) {
+            continue;
+          }
+          processedToolCalls.add(toolHash);
+
+          const cached = this.toolCallCache.get(toolHash);
+          let toolUseId: string;
+          if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+            toolUseId = cached.id;
+          } else {
+            toolUseId = this.generateToolUseId();
+            this.toolCallCache.set(toolHash, { id: toolUseId, timestamp: Date.now() });
+          }
+
+          toolCallMap.set(extractedCall.name + '_' + toolUseId, toolUseId);
+          this.functionCallMap.set(toolUseId, extractedCall.name);
+
+          blocks.push({
+            type: 'tool_use',
+            id: toolUseId,
+            name: extractedCall.name,
+            input: extractedCall.args || {}
+          } as any);
+
+          continue;
+        }
+
         textParts.push(part.text);
         continue;
       }
