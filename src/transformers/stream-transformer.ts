@@ -260,7 +260,7 @@ export class StreamTransformer {
    */
   private static generateClaudeMessageId(): string {
     const randomString = Math.random().toString(36).substr(2, 15) +
-                        Math.random().toString(36).substr(2, 10);
+      Math.random().toString(36).substr(2, 10);
     return `msg_${randomString.substr(0, 25)}`;
   }
 
@@ -645,7 +645,7 @@ export class StreamTransformer {
 
                     // 结束当前文本块（仅当文本块已开始时）
                     if (textBlockStarted) {
-                      sendEvent('content_block_stop', {type: 'content_block_stop', index: textBlockIndex}); // <--- 修复：使用正确的文本块索引
+                      sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex }); // <--- 修复：使用正确的文本块索引
                       textBlockStarted = false;
                       currentBlockIndex++;
                     }
@@ -658,9 +658,9 @@ export class StreamTransformer {
                       input: args
                     };
 
-                    sendEvent('content_block_start', {type: 'content_block_start', index: currentBlockIndex, content_block: toolUse});
-                    sendEvent('content_block_delta', {type: 'content_block_delta', index: currentBlockIndex, delta: {type: 'input_json_delta', partial_json: JSON.stringify(args)}});
-                    sendEvent('content_block_stop', {type: 'content_block_stop', index: currentBlockIndex});
+                    sendEvent('content_block_start', { type: 'content_block_start', index: currentBlockIndex, content_block: toolUse });
+                    sendEvent('content_block_delta', { type: 'content_block_delta', index: currentBlockIndex, delta: { type: 'input_json_delta', partial_json: JSON.stringify(args) } });
+                    sendEvent('content_block_stop', { type: 'content_block_stop', index: currentBlockIndex });
                     currentBlockIndex++;
                   }
                 }
@@ -735,22 +735,13 @@ export class StreamTransformer {
         if (messageStarted && !streamFinished) {
           // 结束thinking block（如果存在）
           if (thinkingBlockStarted) {
-            controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({type: 'content_block_stop', index: thinkingBlockIndex})}\n\n`));
+            controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: thinkingBlockIndex })}\n\n`));
           }
 
           // 
-          controller.enqueue(encoder.encode(`event: content_block_stop
-data: ${JSON.stringify({type: 'content_block_stop', index: textBlockIndex})}
-
-`)); // <--- 
-          controller.enqueue(encoder.encode(`event: message_delta
-data: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}
-
-`));
-          controller.enqueue(encoder.encode(`event: message_stop
-data: ${JSON.stringify({type: 'message_stop'})}
-
-`));
+          controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: textBlockIndex })} \n\n`)); // <--- 
+          controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: Math.floor(currentTextContent.length / 4) } })} \n\n`));
+          controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })} \n\n`));
         }
       }
     });
