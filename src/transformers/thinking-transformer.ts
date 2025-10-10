@@ -38,19 +38,19 @@ export class ThinkingTransformer {
   }> = {
     'gemini-2.5-pro': {
       min: 128,
-      max: 32768,
+      max: 12768,
       default: -1,
       canDisable: false
     },
     'gemini-2.5-flash': {
-      min: 0,
-      max: 24576,
+      min: 128,
+      max: 6576,
       default: -1,
       canDisable: true
     },
     'gemini-2.5-flash-lite': {
       min: 512,
-      max: 24576,
+      max: 4576,
       default: -1,
       canDisable: true
     }

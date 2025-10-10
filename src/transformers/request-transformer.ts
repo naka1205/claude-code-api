@@ -484,21 +484,28 @@ If you generate any Python-like syntax for function calls, it will be rejected a
   ): GeminiGenerationConfig {
     const modelMapper = ModelMapper.getInstance();
     const geminiModel = modelMapper.mapModel(claudeRequest.model);
-    const maxTokens = options.maxOutputTokens ||
-      modelMapper.getRecommendedMaxTokens(geminiModel);
+
+    // 优先级：客户端请求的max_tokens > options中指定的 > 模型推荐默认值
+    let requestedMaxTokens = claudeRequest.max_tokens ||
+                             options.maxOutputTokens ||
+                             modelMapper.getRecommendedMaxTokens(geminiModel);
 
     // 检查token限制
     const capabilities = modelMapper.getModelCapabilities(geminiModel);
-    if (maxTokens > capabilities.maxTokens) {
+
+    // 确保不超过模型能力上限
+    const finalMaxTokens = Math.min(requestedMaxTokens, capabilities.maxTokens);
+
+    if (requestedMaxTokens > capabilities.maxTokens) {
       warnings.push({
         type: 'warning',
-        message: `Requested tokens ${maxTokens} exceeds model limit ${capabilities.maxTokens}. Using model limit.`,
+        message: `Requested max_tokens ${requestedMaxTokens} exceeds model limit ${capabilities.maxTokens}. Adjusted to ${finalMaxTokens}.`,
         parameter: 'max_tokens'
       });
     }
 
     const config: GeminiGenerationConfig = {
-      maxOutputTokens: Math.min(maxTokens, capabilities.maxTokens),
+      maxOutputTokens: finalMaxTokens,
       temperature: claudeRequest.temperature,
       topP: claudeRequest.top_p,
       topK: claudeRequest.top_k,

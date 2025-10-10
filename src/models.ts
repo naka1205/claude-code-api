@@ -48,10 +48,12 @@ const MODEL_MAPPING: Record<string, string> = {
 
 /**
  * Gemini模型能力配置
+ * 基于Google AI Studio官方文档更新的maxTokens限制
+ * 参考: https://ai.google.dev/gemini-api/docs/models/gemini
  */
 const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
   'gemini-2.5-pro': {
-    maxTokens: 8192,
+    maxTokens: 65536,  // Gemini 2.5 Pro支持最大65536输出tokens
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -63,7 +65,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 5
   },
   'gemini-2.5-flash': {
-    maxTokens: 8192,
+    maxTokens: 65536,  // Gemini 2.5 Flash支持最大65536输出tokens
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -75,7 +77,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 10
   },
   'gemini-2.5-flash-lite': {
-    maxTokens: 8192,
+    maxTokens: 65536,  // Gemini 2.5 Flash-Lite支持最大65536输出tokens
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -87,7 +89,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 15
   },
   'gemini-2.0-flash': {
-    maxTokens: 8192,
+    maxTokens: 8192,   // Gemini 2.0 Flash支持最大8192输出tokens
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -158,7 +160,12 @@ export class ModelMapper {
 
   getRecommendedMaxTokens(geminiModel: string): number {
     const capabilities = getModelCapabilities(geminiModel);
-    return capabilities.maxTokens || 8192;
+    // 返回一个合理的默认值，而不是模型最大值
+    // 对于2.5系列返回8192，对于2.0系列返回4096
+    if (geminiModel.startsWith('gemini-2.5')) {
+      return 8192;  // 2.5系列默认8192，足够大多数场景
+    }
+    return 4096;  // 2.0系列默认4096
   }
 
   getSupportedModels(): string[] {

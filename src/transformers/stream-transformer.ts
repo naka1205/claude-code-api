@@ -315,6 +315,7 @@ export class StreamTransformer {
     let messageStarted = false;
     let streamFinished = false;
     let currentTextContent = '';
+    let textBlockStarted = false;  // 跟踪文本块是否已开始
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const messageId = this.generateClaudeMessageId();
@@ -419,13 +420,15 @@ export class StreamTransformer {
                     // 检查文本中是否包含错误输出的functionCall JSON
                     const extractedCall = StreamTransformer.extractFunctionCallFromText(part.text);
                     if (extractedCall) {
-                      // 关闭当前文本块(如果有)
-                      if (currentTextContent !== '') {
+                      // 关闭当前文本块(仅当已开始时)
+                      if (textBlockStarted) {
                         const blockStop: ClaudeStreamEvent = {
                           type: 'content_block_stop',
                           index: 0
                         };
                         controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(blockStop)}\\n\\n`));
+                        textBlockStarted = false;
+                        currentBlockIndex++;
                       }
 
                       // 发送tool_use block
@@ -467,7 +470,8 @@ export class StreamTransformer {
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (incrementalText) {
                       // 确保文本块已开始
-                      if (currentBlockIndex === 0 && currentTextContent === '') {
+                      if (!textBlockStarted) {
+                        textBlockStarted = true;
                         const blockStart: ClaudeStreamEvent = {
                           type: 'content_block_start',
                           index: 0,
@@ -561,9 +565,10 @@ export class StreamTransformer {
                       catch { args = {}; }
                     }
 
-                    // 结束当前文本块
-                    if (currentBlockIndex === 0) {
+                    // 结束当前文本块（仅当文本块已开始时）
+                    if (textBlockStarted) {
                       controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\\n\\n`));
+                      textBlockStarted = false;
                       currentBlockIndex++;
                     }
 

@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: Config = {
   gemini: {
     baseUrl: 'https://generativelanguage.googleapis.com',
     apiVersion: 'v1beta',
-    timeout: TIMEOUTS.DEFAULT
+    timeout: TIMEOUTS.STREAM
   },
   rateLimits: {
     tiers: {
