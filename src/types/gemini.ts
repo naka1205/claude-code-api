@@ -175,6 +175,7 @@ export interface GeminiRequest {
 export interface GeminiCandidate {
   content: GeminiContent;
   finishReason?: string;
+  finishMessage?: string;  // 添加finishMessage字段
   safetyRatings?: Array<{
     category: string;
     probability: string;

@@ -204,13 +204,14 @@ export class ThinkingTransformer {
   /**
    * 使用Gemini返回的原始签名
    * 签名用于维持多轮对话上下文,必须原样保留
+   * 注意: 第一个thinking chunk通常没有signature,只有最后的chunk才有thoughtSignature
    */
   static convertGeminiSignatureToClaudeFormat(
     geminiSignature?: string
   ): string {
     if (!geminiSignature) {
-      console.warn('[ThinkingTransformer] No Gemini signature provided - this may break multi-turn context');
-      return 'sig_missing';
+      // 不打印WARNING:第一个thinking chunk通常没有signature,这是正常的
+      return 'sig_pending';
     }
 
     // 直接返回Gemini的原始签名,不做任何转换

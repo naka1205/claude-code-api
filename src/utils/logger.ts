@@ -10,6 +10,7 @@ interface LogEntry {
   isStream: boolean;
   clientRequest?: any;
   geminiData?: any; // 统一字段：非流式时存完整响应，流式时存chunks数组
+  claudeEvents?: any[]; // 转换后的Claude SSE事件数组
 }
 
 export class Logger {
@@ -60,6 +61,21 @@ export class Logger {
     if (entry && entry.isStream) {
       if (!entry.geminiData) entry.geminiData = [];
       entry.geminiData.push(chunk);
+      this.logs.set(requestId, entry);
+    }
+  }
+
+  static logClaudeEvent(requestId: string, eventType: string, eventData: any) {
+    if (!this.enabled) return;
+
+    const entry = this.logs.get(requestId);
+    if (entry) {
+      if (!entry.claudeEvents) entry.claudeEvents = [];
+      entry.claudeEvents.push({
+        type: eventType,
+        data: eventData,
+        timestamp: new Date().toISOString()
+      });
       this.logs.set(requestId, entry);
     }
   }

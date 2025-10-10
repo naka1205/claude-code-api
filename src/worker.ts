@@ -51,7 +51,7 @@ export default {
 
       // 生成唯一请求ID - 确保每个请求都不同
       const cfRay = request.headers.get('cf-ray');
- 
+
       let requestId: string;
       if (cfRay) {
         // 生产环境使用CF-Ray
@@ -178,16 +178,18 @@ export default {
         ctx
       });
 
+
+      if (method === 'POST' && pathname === '/v1/messages/count_tokens') {
+        const response = await handler.handleCountTokensRequest(context, request, requestId);
+        return response;
+      }
+
       // Claude API compatibility endpoints
       if (method === 'POST' && pathname === '/v1/messages') {
         const response = await handler.handleMessagesRequest(context, request, requestId);
         return response;
       }
 
-      if (method === 'POST' && pathname === '/v1/messages/count_tokens') {
-        const response = await handler.handleCountTokensRequest(context, request, requestId);
-        return response;
-      }
 
       // 404 for unknown endpoints
       return createErrorResponse(404, 'Not Found', corsEnabled);

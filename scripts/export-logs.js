@@ -31,7 +31,7 @@ async function exportLogs() {
 
     let savedCount = 0;
 
-    // 为每个请求保存两个文件 - 直接保存原始数据
+    // 为每个请求保存文件 - 直接保存原始数据
     for (const log of data.logs) {
       const requestId = log.requestId;
 
@@ -43,20 +43,29 @@ async function exportLogs() {
         savedCount++;
       }
 
-      // 保存GEMINI原始数据
+      // 保存GEMINI原始响应数据
       if (log.geminiData) {
         const responseFile = path.join(DATA_DIR, `${requestId}_response.json`);
         fs.writeFileSync(responseFile, JSON.stringify(log.geminiData, null, 2));
         console.log(`✅ ${requestId}_response.json`);
         savedCount++;
       }
+
+      // 保存转换后的Claude事件(如果有)
+      if (log.claudeEvents && log.claudeEvents.length > 0) {
+        const claudeFile = path.join(DATA_DIR, `${requestId}_claude_events.json`);
+        fs.writeFileSync(claudeFile, JSON.stringify(log.claudeEvents, null, 2));
+        console.log(`✅ ${requestId}_claude_events.json (${log.claudeEvents.length} events)`);
+        savedCount++;
+      }
     }
 
     console.log(`\n🎉 Export complete! Saved ${savedCount} files to ./data/`);
+    console.log(`📌 Tip: Compare *_response.json (Gemini) with *_claude_events.json (Claude) to debug`);
 
   } catch (error) {
     console.error('❌ Export failed:', error.message);
-    console.log('💡 Make sure server is running: npm run dev:debug');
+    console.log('💡 Make sure server is running on http://127.0.0.1:8787');
   }
 }
 

@@ -6,6 +6,7 @@
 import { ClaudeRequest, ClaudeCountRequest } from '../types/claude';
 import { RequestValidator } from './request-validator';
 import { RequestTransformer } from '../transformers/request-transformer';
+import { CountTokensTransformer } from '../transformers/count-tokens-transformer';
 import { StreamManager } from './stream-manager';
 import { ClientManager } from './client-manager';
 import { ThinkingTransformer } from '../transformers/thinking-transformer';
@@ -236,8 +237,14 @@ export class RequestHandler {
    * 处理token计数请求
    */
   async handleCountTokensRequest(context: RequestContext, request: Request, requestId: string): Promise<Response> {
+    const startTime = Date.now();
 
     try {
+      const countRequest = context.body as ClaudeCountRequest;
+
+      // 记录count_tokens请求
+      Logger.logRequest(requestId, countRequest.model, countRequest);
+
       // 1. 提取API密钥
       const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
       if (!apiKeys || apiKeys.length === 0) {
@@ -245,61 +252,44 @@ export class RequestHandler {
       }
 
       // 2. 验证请求
-      if (this.config.enableValidation) {
-        const validationError = this.validator.validateCountRequest(context.body);
-        if (validationError) {
-          return this.responseManager.createErrorResponse(400, validationError);
-        }
+      const validationError = CountTokensTransformer.validateCountRequest(countRequest);
+      if (validationError) {
+        return this.responseManager.createErrorResponse(400, validationError);
       }
 
-      const countRequest = context.body as ClaudeCountRequest;
-
       // 3. 选择最佳API密钥
-      const selectedKey = await KeyUsageCache.pickBestKey(
-        apiKeys,
-        this.getGeminiModel(countRequest.model)
-      );
+      const geminiModel = this.getGeminiModel(countRequest.model);
+      const selectedKey = await KeyUsageCache.pickBestKey(apiKeys, geminiModel);
 
       if (!selectedKey) {
         return this.responseManager.createErrorResponse(429, 'No available API keys');
       }
 
-      // 4. 转换为Gemini格式（仅转换contents，不包括generationConfig等）
-      // 根据Gemini官方文档，countTokens端点只需要contents字段
-      const transformResult = await RequestTransformer.transformRequest({
-        ...countRequest,
-        max_tokens: 1
-      } as ClaudeRequest);
+      // 4. 转换请求
+      const geminiCountRequest = await CountTokensTransformer.transformCountRequest(countRequest);
 
-      // Gemini countTokens API只接受 { contents, systemInstruction } 字段
-      const geminiCountRequest: any = {
-        contents: transformResult.request.contents
-      };
-
-      // 如果有systemInstruction，也包含进去（会影响token计数）
-      if (transformResult.request.systemInstruction) {
-        geminiCountRequest.systemInstruction = transformResult.request.systemInstruction;
-      }
-
-      // 如果有tools，也包含进去（会影响token计数）
-      if (transformResult.request.tools && transformResult.request.tools.length > 0) {
-        geminiCountRequest.tools = transformResult.request.tools;
-      }
-
-      // 5. 创建客户端（使用选定的密钥）
+      // 5. 创建客户端
       const client = this.clientManager.createClient([selectedKey]);
 
       // 6. 发送计数请求
-      const endpoint = this.getCountEndpoint(countRequest.model);
+      const endpoint = `/v1beta/models/${geminiModel}:countTokens`;
       const response = await client.sendRequest(endpoint, geminiCountRequest, false, requestId);
 
       // 7. 处理响应
-      // Gemini返回: { totalTokens: number }
-      // Claude期望: { input_tokens: number }
       if ('body' in response && response.body) {
-        const totalTokens = response.body.totalTokens || 0;
+        if (response.statusCode >= 400) {
+          await KeyUsageCache.onError(selectedKey, response.statusCode);
+
+          return this.responseManager.createErrorResponse(
+            response.statusCode,
+            response.body.error?.message || 'Failed to count tokens'
+          );
+        }
+
+        const claudeResponse = CountTokensTransformer.transformCountResponse(response.body);
+
         return new Response(
-          JSON.stringify({ input_tokens: totalTokens }),
+          JSON.stringify(claudeResponse),
           {
             status: 200,
             headers: {
@@ -310,7 +300,7 @@ export class RequestHandler {
         );
       }
 
-      return this.responseManager.createErrorResponse(500, 'Failed to count tokens');
+      return this.responseManager.createErrorResponse(500, 'Invalid response from Gemini API');
 
     } catch (error) {
       const errorContext = createErrorContext(
@@ -319,17 +309,12 @@ export class RequestHandler {
         error,
         {
           requestId: requestId,
-          context: {
-            method: context.method,
-            pathname: context.pathname,
-            model: context.body?.model,
-            hasMessages: !!(context.body?.messages),
-            messageCount: context.body?.messages?.length || 0
-          }
+          model: context.body?.model,
+          duration: Date.now() - startTime
         }
       );
 
-      console.error('[RequestHandler] Count tokens request error:', errorContext);
+      console.error('[RequestHandler] Count tokens error:', errorContext);
 
       return this.responseManager.createErrorResponse(
         500,
@@ -369,14 +354,6 @@ export class RequestHandler {
     const geminiModel = this.getGeminiModel(model);
     const action = isStream ? 'streamGenerateContent' : 'generateContent';
     return `/v1beta/models/${geminiModel}:${action}`;
-  }
-
-  /**
-   * 获取计数端点
-   */
-  private getCountEndpoint(model: string): string {
-    const geminiModel = this.getGeminiModel(model);
-    return `/v1beta/models/${geminiModel}:countTokens`;
   }
 }
 
