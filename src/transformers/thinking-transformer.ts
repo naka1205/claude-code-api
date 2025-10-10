@@ -87,16 +87,16 @@ export class ThinkingTransformer {
     // 如果明确指定了thinking配置
     if (claudeThinking) {
       if (claudeThinking.type === 'enabled') {
-        let budget: number;
-        if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
-          budget = Math.min(claudeThinking.budget_tokens, limits.max);
-          budget = Math.max(budget, limits.min);
-        } else {
-          budget = -1; // 动态预算
-        }
+        // let budget: number;
+        // if (claudeThinking.budget_tokens && claudeThinking.budget_tokens >= 1024) {
+        //   budget = Math.min(claudeThinking.budget_tokens, limits.max);
+        //   budget = Math.max(budget, limits.min);
+        // } else {
+        //   budget = -1; // 动态预算
+        // }
 
         return {
-          thinkingBudget: budget,
+          thinkingBudget: -1,
           includeThoughts: true,
           exposeThoughtsToClient: true,
           exposeToClient: true

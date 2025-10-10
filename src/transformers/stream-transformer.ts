@@ -316,6 +316,7 @@ export class StreamTransformer {
     let streamFinished = false;
     let currentTextContent = '';
     let textBlockStarted = false;  // 跟踪文本块是否已开始
+    let textBlockIndex = -1;       // <--- 添加：专门跟踪文本块的索引
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const messageId = this.generateClaudeMessageId();
@@ -435,7 +436,7 @@ export class StreamTransformer {
                       if (textBlockStarted) {
                         const blockStop: ClaudeStreamEvent = {
                           type: 'content_block_stop',
-                          index: 0
+                          index: textBlockIndex // <--- 修复：使用正确的文本块索引
                         };
                         sendEvent('content_block_stop', blockStop);
                         textBlockStarted = false;
@@ -480,20 +481,32 @@ export class StreamTransformer {
 
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (incrementalText) {
+                      // 如果thinking块已开始，则在开始文本块之前先结束它
+                      if (thinkingBlockStarted && exposeThinkingToClient) {
+                        const thinkingBlockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: thinkingBlockIndex
+                        };
+                        sendEvent('content_block_stop', thinkingBlockStop);
+                        thinkingBlockStarted = false;
+                      }
+
                       // 确保文本块已开始
                       if (!textBlockStarted) {
                         textBlockStarted = true;
+                        textBlockIndex = currentBlockIndex; // <--- 修复：分配唯一索引
                         const blockStart: ClaudeStreamEvent = {
                           type: 'content_block_start',
-                          index: 0,
+                          index: textBlockIndex, // <--- 修复：使用唯一索引
                           content_block: { type: 'text', text: '' } as ClaudeTextBlock
                         };
                         sendEvent('content_block_start', blockStart);
+                        currentBlockIndex++; // <--- 修复：递增主索引
                       }
 
                       const delta: ClaudeStreamEvent = {
                         type: 'content_block_delta',
-                        index: 0,
+                        index: textBlockIndex, // <--- 修复：使用正确的文本块索引
                         delta: { type: 'text_delta', text: incrementalText }
                       };
                       sendEvent('content_block_delta', delta);
@@ -529,17 +542,19 @@ export class StreamTransformer {
                       if (incrementalText) {
                         if (!textBlockStarted) {
                           textBlockStarted = true;
+                          textBlockIndex = currentBlockIndex; // <--- 修复：分配唯一索引
                           const blockStart: ClaudeStreamEvent = {
                             type: 'content_block_start',
-                            index: 0,
+                            index: textBlockIndex, // <--- 修复：使用唯一索引
                             content_block: { type: 'text', text: '' }
                           };
                           sendEvent('content_block_start', blockStart);
+                          currentBlockIndex++; // <--- 修复：递增主索引
                         }
 
                         const delta: ClaudeStreamEvent = {
                           type: 'content_block_delta',
-                          index: 0,
+                          index: textBlockIndex, // <--- 修复：使用正确的文本块索引
                           delta: { type: 'text_delta', text: incrementalText }
                         };
                         sendEvent('content_block_delta', delta);
@@ -630,7 +645,7 @@ export class StreamTransformer {
 
                     // 结束当前文本块（仅当文本块已开始时）
                     if (textBlockStarted) {
-                      sendEvent('content_block_stop', {type: 'content_block_stop', index: 0});
+                      sendEvent('content_block_stop', {type: 'content_block_stop', index: textBlockIndex}); // <--- 修复：使用正确的文本块索引
                       textBlockStarted = false;
                       currentBlockIndex++;
                     }
@@ -680,7 +695,7 @@ export class StreamTransformer {
                     sendEvent('content_block_stop', { type: 'content_block_stop', index: thinkingBlockIndex });
                   }
                   if (textBlockStarted) {
-                    sendEvent('content_block_stop', { type: 'content_block_stop', index: 0 });
+                    sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex }); // <--- 修复：使用正确的文本块索引
                   }
 
                   totalOutputTokens =
@@ -723,10 +738,19 @@ export class StreamTransformer {
             controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({type: 'content_block_stop', index: thinkingBlockIndex})}\n\n`));
           }
 
-          // 结束文本block
-          controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({type: 'content_block_stop', index: 0})}\n\n`));
-          controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}\n\n`));
-          controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({type: 'message_stop'})}\n\n`));
+          // 
+          controller.enqueue(encoder.encode(`event: content_block_stop
+data: ${JSON.stringify({type: 'content_block_stop', index: textBlockIndex})}
+
+`)); // <--- 
+          controller.enqueue(encoder.encode(`event: message_delta
+data: ${JSON.stringify({type: 'message_delta', delta: {stop_reason: 'end_turn'}, usage: {output_tokens: Math.floor(currentTextContent.length / 4)}})}
+
+`));
+          controller.enqueue(encoder.encode(`event: message_stop
+data: ${JSON.stringify({type: 'message_stop'})}
+
+`));
         }
       }
     });
