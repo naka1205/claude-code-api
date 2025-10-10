@@ -156,18 +156,18 @@ export class ResponseTransformer {
     );
 
     // Fallback处理：确保与流式输出一致的thinking处理
-    if (result.length === 0 || (result.length === 1 && result[0].type === 'text' && !(result[0] as any).text?.trim())) {
-      const hasThinkingParts = candidate.content.parts.some((p: any) => 'thought' in p && p.thought);
-      const hasRegularParts = candidate.content.parts.some((p: any) => 'text' in p && !('thought' in p));
+    // if (result.length === 0 || (result.length === 1 && result[0].type === 'text' && !(result[0] as any).text?.trim())) {
+    //   const hasThinkingParts = candidate.content.parts.some((p: any) => 'thought' in p && p.thought);
+    //   const hasRegularParts = candidate.content.parts.some((p: any) => 'text' in p && !('thought' in p));
 
-      if (hasThinkingParts && !hasRegularParts && !exposeThinkingToClient) {
-        // 与流式输出保持一致：提供简单的响应而不是暴露thinking内容
-        return [{
-          type: 'text',
-          text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
-        }];
-      }
-    }
+    //   if (hasThinkingParts && !hasRegularParts && !exposeThinkingToClient) {
+    //     // 与流式输出保持一致：提供简单的响应而不是暴露thinking内容
+    //     return [{
+    //       type: 'text',
+    //       text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
+    //     }];
+    //   }
+    // }
 
     return result;
   }
@@ -176,8 +176,9 @@ export class ResponseTransformer {
    * 转换单个部分
    */
   private static transformPart(part: GeminiPart, options?: ResponseTransformOptions): ClaudeContentBlock | null {
-    // 文本部分 - 排除带thought或thoughtSignature标记的内容
-    if ('text' in part && !('thought' in part) && !('thoughtSignature' in part)) {
+    // 文本部分 - 与流式处理保持一致的过滤条件
+    // 排除带thought标记、functionCall的part,并检查text真值
+    if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
       return {
         type: 'text',
         text: part.text
@@ -216,8 +217,10 @@ export class ResponseTransformer {
     // 函数响应部分
     if ('functionResponse' in part) {
       const functionResponse = part.functionResponse;
-      // 为工具结果生成ID，通常在实际实现中这个ID应该来自之前的tool_use
-      const toolUseId = `toolu_${Math.random().toString(36).substr(2, 23)}`;
+      // 生成与流式处理一致的工具使用ID格式
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substr(2, 9);
+      const toolUseId = `toolu_${timestamp}_${random}`;
       return {
         type: 'tool_result',
         tool_use_id: toolUseId,
@@ -226,8 +229,9 @@ export class ResponseTransformer {
       } as any;
     }
 
-    // 思考内容部分 - 支持thought和thoughtSignature两种格式
-    if (('thought' in part && 'text' in part) || ('thoughtSignature' in part && 'text' in part)) {
+    // 思考内容部分 - 仅处理带thought标记的part
+    // thoughtSignature单独出现表示thinking结束,不是thinking内容
+    if ('thought' in part && 'text' in part && (part as any).thought === true) {
       const shouldExpose = options?.exposeThinkingToClient ?? false;
 
       // Logger.info('ResponseTransformer', 'Processing thinking content part', {
@@ -245,10 +249,17 @@ export class ResponseTransformer {
         //   exposeToClient: shouldExpose
         // });
 
+        const thinkingText = (part as any).text;
+        const geminiSignature = (part as any).thoughtSignature;
+
         return {
           type: 'thinking',
-          thinking: (part as any).text, // 思考内容在text字段中
-          signature: ThinkingTransformer.generateThinkingSignature((part as any).text)
+          thinking: thinkingText, // 思考内容在text字段中
+          // 正确转换Gemini的thoughtSignature为Claude的signature格式
+          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
+            geminiSignature,
+            thinkingText
+          )
         } as ClaudeThinkingBlock;
       } else {
         // 不暴露思考内容时，过滤掉

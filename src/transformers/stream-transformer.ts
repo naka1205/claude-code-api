@@ -131,12 +131,15 @@ class StreamStateManager {
     return this.hasStartedThinkingBlock;
   }
   /**
-   * 处理增量文本 - 基于官方文档的正确实现
+   * 处理增量文本 - 修复Gemini增量式响应的去重问题
    */
   processIncrementalText(text: string): string | null {
     if (!text) return null;
 
-    // 检查是否为增量内容
+    // 检查是否为完全重复的内容
+    if (this.lastTextContent === text) return null;
+
+    // 检查是否为累积式内容 (Gemini某些情况下的响应模式)
     if (this.lastTextContent && text.startsWith(this.lastTextContent)) {
       const incrementalText = text.substring(this.lastTextContent.length);
       if (!incrementalText) return null;
@@ -152,17 +155,20 @@ class StreamStateManager {
       return incrementalText;
     }
 
-    // 全新文本或重复文本
-    if (this.lastTextContent === text) return null;
+    // 检查是否为已包含的子内容 (防止重复发送已有内容)
+    if (this.buffer.textContent && this.buffer.textContent.includes(text.trim())) {
+      return null;
+    }
 
+    // 全新的增量内容 (Gemini标准的增量式响应)
     this.lastTextContent = text;
-    this.buffer.textContent = text; // 重置为全新内容
+    this.buffer.textContent += text;
 
     if (this.hasStartedTextBlock) {
-      // 更新整个文本块
+      // 追加到文本块
       const textBlock = this.buffer.contentBlocks[this.currentTextBlockIndex] as ClaudeTextBlock;
       if (textBlock) {
-        textBlock.text = text;
+        textBlock.text += text;
       }
     }
 
@@ -371,8 +377,8 @@ export class StreamTransformer {
               // 处理文本内容和工具调用
               if (geminiChunk.candidates?.[0]?.content?.parts) {
                 for (const part of geminiChunk.candidates[0].content.parts) {
-                  // 处理文本内容
-                  if ('text' in part && part.text && !('thought' in part) && !('thoughtSignature' in part)) {
+                  // 处理文本内容 - 排除带thought标记和functionCall的part
+                  if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
                     const incrementalText = stateManager.processIncrementalText(part.text);
                     if (incrementalText) {
                       // 确保文本块已开始
@@ -394,18 +400,23 @@ export class StreamTransformer {
                       currentTextContent += incrementalText;
                     }
                   }
-                  // 处理thinking内容 - 关键修复：避免为相同内容创建多个block
-                  else if (('thought' in part && 'text' in part) || ('thoughtSignature' in part && 'text' in part)) {
+                  // 处理thinking内容 - 仅处理带thought标记的part
+                  // thoughtSignature单独出现时(通常与functionCall一起)表示thinking结束
+                  else if ('thought' in part && 'text' in part && (part as any).thought === true) {
                     if (exposeThinkingToClient) {
                       const thinkingText = (part as any).text;
-                      const originalSignature = (part as any).thoughtSignature;
+                      const geminiSignature = (part as any).thoughtSignature;
 
                       // 关键修复：检查这个thinking内容是否已经处理过
                       if (!thinkingBlockStarted) {
                         // 首次thinking：创建block
                         thinkingBlockIndex = currentBlockIndex;
                         thinkingBlockStarted = true;
-                        thinkingSignature = originalSignature || ThinkingTransformer.generateThinkingSignature(thinkingText);
+                        // 正确转换Gemini签名为Claude格式
+                        thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
+                          geminiSignature,
+                          thinkingText
+                        );
                         accumulatedThinking = thinkingText;
 
                         const thinkingBlockStart: ClaudeStreamEvent = {
@@ -444,6 +455,23 @@ export class StreamTransformer {
                   }
                   // 处理工具调用 - 保持原有逻辑
                   else if ('functionCall' in part && part.functionCall) {
+                    // 检查是否包含thoughtSignature,如果有则表示thinking结束
+                    if ('thoughtSignature' in part && thinkingBlockStarted && exposeThinkingToClient) {
+                      const geminiSignature = (part as any).thoughtSignature;
+                      // 更新thinking block的signature
+                      thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
+                        geminiSignature,
+                        accumulatedThinking
+                      );
+                      // 结束thinking block
+                      const thinkingBlockStop: ClaudeStreamEvent = {
+                        type: 'content_block_stop',
+                        index: thinkingBlockIndex
+                      };
+                      controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
+                      thinkingBlockStarted = false; // 标记thinking已结束
+                    }
+
                     if (stateManager.isDuplicateFunctionCall(part.functionCall)) continue;
 
                     const toolUseId = stateManager.recordFunctionCall(part.functionCall);
@@ -480,8 +508,8 @@ export class StreamTransformer {
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
                 streamFinished = true;
 
-                // 结束thinking block（如果已开始）
-                if (thinkingBlockStarted) {
+                // 结束thinking block（如果仍在进行中且未被thoughtSignature结束）
+                if (thinkingBlockStarted && exposeThinkingToClient) {
                   const thinkingBlockStop: ClaudeStreamEvent = {
                     type: 'content_block_stop',
                     index: thinkingBlockIndex
@@ -491,7 +519,7 @@ export class StreamTransformer {
 
                 // 发送文本block结束事件
                 if (currentTextContent || currentBlockIndex === 0) {
-                  const textBlockIndex = thinkingBlockStarted ? 0 : 0; // 文本总是使用index 0
+                  const textBlockIndex = 0; // 文本总是使用index 0
                   controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: textBlockIndex})}\\n\\n`));
                 }
 

@@ -149,7 +149,7 @@ export class ThinkingTransformer {
         // }
 
         return {
-          thinkingBudget: -1,
+          thinkingBudget: 128,
           includeThoughts: true,
           exposeThoughtsToClient: true,
           exposeToClient: true

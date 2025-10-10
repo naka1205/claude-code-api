@@ -184,7 +184,7 @@ export default {
         return response;
       }
 
-      if (method === 'POST' && pathname === '/v1/messages/count-tokens') {
+      if (method === 'POST' && pathname === '/v1/messages/count_tokens') {
         const response = await handler.handleCountTokensRequest(context, request, requestId);
         return response;
       }

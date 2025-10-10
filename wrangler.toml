@@ -3,11 +3,9 @@ main = "src/worker.ts"
 compatibility_date = "2024-12-13"
 compatibility_flags = ["nodejs_compat"]
 
-# KV 命名空间已移除（项目已不再依赖KV存储）
-# 如需启用KV，请取消下面的注释
-# [[kv_namespaces]]
-# binding = "KV"
-# id = "ab938d10933d4d8bae1c959c52460af0"
+[dev]
+ip = "0.0.0.0"
+port = 8787
 
 [observability.logs]
 enabled = true

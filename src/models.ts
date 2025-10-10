@@ -34,6 +34,7 @@ const MODEL_MAPPING: Record<string, string> = {
 
   // Claude Sonnet 4 -> Gemini 2.5 Flash (视觉、工具、高性能)
   'claude-sonnet-4-20250514': 'gemini-2.5-flash',
+  'claude-sonnet-4-5-20250929': 'gemini-2.5-flash',
 
   // Claude 3.7 Sonnet -> Gemini 2.5 Flash (视觉、工具、高性能)
   'claude-3-7-sonnet-20250219': 'gemini-2.5-flash',

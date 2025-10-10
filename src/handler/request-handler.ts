@@ -264,21 +264,38 @@ export class RequestHandler {
         return this.responseManager.createErrorResponse(429, 'No available API keys');
       }
 
-      // 4. 转换为Gemini格式（用于计数）
+      // 4. 转换为Gemini格式（仅转换contents，不包括generationConfig等）
+      // 根据Gemini官方文档，countTokens端点只需要contents字段
       const transformResult = await RequestTransformer.transformRequest({
         ...countRequest,
         max_tokens: 1
       } as ClaudeRequest);
-      const geminiRequest = transformResult.request;
+
+      // Gemini countTokens API只接受 { contents, systemInstruction } 字段
+      const geminiCountRequest: any = {
+        contents: transformResult.request.contents
+      };
+
+      // 如果有systemInstruction，也包含进去（会影响token计数）
+      if (transformResult.request.systemInstruction) {
+        geminiCountRequest.systemInstruction = transformResult.request.systemInstruction;
+      }
+
+      // 如果有tools，也包含进去（会影响token计数）
+      if (transformResult.request.tools && transformResult.request.tools.length > 0) {
+        geminiCountRequest.tools = transformResult.request.tools;
+      }
 
       // 5. 创建客户端（使用选定的密钥）
       const client = this.clientManager.createClient([selectedKey]);
 
       // 6. 发送计数请求
       const endpoint = this.getCountEndpoint(countRequest.model);
-      const response = await client.sendRequest(endpoint, geminiRequest, false, requestId);
+      const response = await client.sendRequest(endpoint, geminiCountRequest, false, requestId);
 
       // 7. 处理响应
+      // Gemini返回: { totalTokens: number }
+      // Claude期望: { input_tokens: number }
       if ('body' in response && response.body) {
         const totalTokens = response.body.totalTokens || 0;
         return new Response(
