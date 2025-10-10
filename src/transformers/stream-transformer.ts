@@ -588,9 +588,13 @@ export class StreamTransformer {
                 }
               }
 
-              // 检查是否完成
+              // 检查是否完成 - 关键修复: finishReason标记响应轮次结束
               if (geminiChunk.candidates?.[0]?.finishReason && !streamFinished) {
                 streamFinished = true;
+                const candidate = geminiChunk.candidates[0];
+
+                // 根据finishMessage判断响应类型
+                const isToolCall = candidate.finishMessage === "Model generated function call(s).";
 
                 // 结束thinking block（如果仍在进行中且未被thoughtSignature结束）
                 if (thinkingBlockStarted && exposeThinkingToClient) {
@@ -601,14 +605,22 @@ export class StreamTransformer {
                   controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify(thinkingBlockStop)}\\n\\n`));
                 }
 
-                // 发送文本block结束事件
-                if (currentTextContent || currentBlockIndex === 0) {
+                // 关键修复: 只在文本块已开始时才结束文本块
+                if (textBlockStarted) {
                   const textBlockIndex = 0; // 文本总是使用index 0
                   controller.enqueue(encoder.encode(`event: content_block_stop\\ndata: ${JSON.stringify({type: 'content_block_stop', index: textBlockIndex})}\\n\\n`));
+                  textBlockStarted = false;
                 }
 
                 totalOutputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || Math.floor(currentTextContent.length / 4);
-                const stopInfo = transformStopReason(geminiChunk.candidates[0].finishReason);
+
+                // 根据finishReason和finishMessage组合判断stop_reason
+                let stopInfo;
+                if (isToolCall) {
+                  stopInfo = { stop_reason: 'tool_use' };
+                } else {
+                  stopInfo = transformStopReason(candidate.finishReason);
+                }
 
                 controller.enqueue(encoder.encode(`event: message_delta\\ndata: ${JSON.stringify({type: 'message_delta', delta: stopInfo, usage: {output_tokens: totalOutputTokens}})}\\n\\n`));
                 controller.enqueue(encoder.encode(`event: message_stop\\ndata: ${JSON.stringify({type: 'message_stop'})}\\n\\n`));
