@@ -40,13 +40,4 @@ export class ApiKeyManager {
     // 去重
     return [...new Set(keys)];
   }
-
-  /**
-   * 验证API密钥格式
-   */
-  validateApiKey(key: string): boolean {
-    // Gemini API密钥通常以 "AIza" 开头
-    // 这里只做基本长度检查
-    return key.length >= API_KEY.MIN_LENGTH;
-  }
 }

@@ -125,28 +125,21 @@ export class ResponseTransformer {
   ): Promise<ClaudeContentBlock[]> {
     // 快速检查是否有内容
     if (!candidate.content?.parts?.length) {
-      // 检查是否在candidate级别有思考内容
+      // 降级处理：直接返回内容,不尝试分离
       const fallbackContent = (candidate as any).content?.text || (candidate as any).thinking;
-      if (fallbackContent && exposeThinkingToClient) {
-        const { thinking, response } = ThinkingTransformer.separateThinkingAndResponse(fallbackContent);
-        const blocks: ClaudeContentBlock[] = [];
-
-        if (thinking) {
-          blocks.push({
+      if (fallbackContent) {
+        if (exposeThinkingToClient && (candidate as any).thinking) {
+          // 如果是thinking字段,作为thinking block返回
+          // 注意:这是fallback路径,没有thoughtSignature
+          return [{
             type: 'thinking',
-            thinking: thinking,
-            signature: ThinkingTransformer.generateThinkingSignature(thinking)
-          } as ClaudeThinkingBlock);
+            thinking: fallbackContent,
+            signature: 'sig_fallback_no_signature'
+          } as ClaudeThinkingBlock];
         }
-
-        if (response) {
-          blocks.push({ type: 'text', text: response });
-        }
-
-        return blocks.length > 0 ? blocks : [{ type: 'text', text: fallbackContent }];
+        return [{ type: 'text', text: fallbackContent }];
       }
-
-      return [{ type: 'text', text: fallbackContent || '' }];
+      return [{ type: 'text', text: '' }];
     }
 
     // 使用ContentTransformer处理内容块
@@ -254,12 +247,9 @@ export class ResponseTransformer {
 
         return {
           type: 'thinking',
-          thinking: thinkingText, // 思考内容在text字段中
-          // 正确转换Gemini的thoughtSignature为Claude的signature格式
-          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
-            geminiSignature,
-            thinkingText
-          )
+          thinking: thinkingText,
+          // 直接使用Gemini返回的原始签名
+          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature)
         } as ClaudeThinkingBlock;
       } else {
         // 不暴露思考内容时，过滤掉

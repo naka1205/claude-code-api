@@ -412,11 +412,8 @@ export class StreamTransformer {
                         // 首次thinking：创建block
                         thinkingBlockIndex = currentBlockIndex;
                         thinkingBlockStarted = true;
-                        // 正确转换Gemini签名为Claude格式
-                        thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
-                          geminiSignature,
-                          thinkingText
-                        );
+                        // 正确使用Gemini签名
+                        thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                         accumulatedThinking = thinkingText;
 
                         const thinkingBlockStart: ClaudeStreamEvent = {
@@ -459,10 +456,7 @@ export class StreamTransformer {
                     if ('thoughtSignature' in part && thinkingBlockStarted && exposeThinkingToClient) {
                       const geminiSignature = (part as any).thoughtSignature;
                       // 更新thinking block的signature
-                      thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
-                        geminiSignature,
-                        accumulatedThinking
-                      );
+                      thinkingSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                       // 结束thinking block
                       const thinkingBlockStop: ClaudeStreamEvent = {
                         type: 'content_block_stop',

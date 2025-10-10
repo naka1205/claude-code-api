@@ -3,13 +3,6 @@
  */
 
 /**
- * Generate a unique request ID
- */
-export function generateRequestId(): string {
-  return `req_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-/**
  * Convert Headers object to plain object
  */
 export function headersToObject(headers: Headers): Record<string, string> {
@@ -117,38 +110,3 @@ export function createErrorContext(
   };
 }
 
-/**
- * Format error for logging with enhanced details
- */
-export function formatErrorForLogging(
-  error: any,
-  context: Partial<ErrorContext>
-): string {
-  const errorContext = {
-    timestamp: new Date().toISOString(),
-    ...context
-  };
-
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  const errorStack = error instanceof Error ? error.stack : undefined;
-
-  let formattedError = `[${errorContext.component}] ${errorContext.operation} failed: ${errorMessage}`;
-
-  if (errorContext.statusCode) {
-    formattedError += ` (Status: ${errorContext.statusCode})`;
-  }
-
-  if (errorContext.requestId) {
-    formattedError += ` (RequestID: ${errorContext.requestId})`;
-  }
-
-  if (errorStack) {
-    formattedError += `\nStack trace: ${errorStack}`;
-  }
-
-  if (errorContext.additionalData) {
-    formattedError += `\nAdditional data: ${JSON.stringify(errorContext.additionalData, null, 2)}`;
-  }
-
-  return formattedError;
-}

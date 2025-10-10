@@ -222,13 +222,3 @@ export class GeminiApiClient {
   }
 
 }
-
-/**
- * 创建Gemini客户端的工厂函数
- */
-export function createGeminiClient(
-  apiKeys: string | string[],
-  config: ApiClientConfig = {}
-): GeminiApiClient {
-  return new GeminiApiClient(apiKeys, config);
-}

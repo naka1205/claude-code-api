@@ -13,7 +13,7 @@ import { ResponseManager } from './response-manager';
 import { ApiKeyManager } from './api-key-manager';
 import { KeyUsageCache } from './key-usage-cache';
 import { ApiResponse } from '../client';
-import { generateRequestId, createErrorContext, maskApiKey, maskSensitiveData } from '../utils/common';
+import { createErrorContext, maskApiKey, maskSensitiveData } from '../utils/common';
 import { Logger } from '../utils/logger';
 
 export interface HandlerConfig {

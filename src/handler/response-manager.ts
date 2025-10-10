@@ -6,7 +6,7 @@
 import { ApiResponse } from '../client';
 import { ResponseTransformer } from '../transformers/response-transformer';
 import { ClaudeResponse } from '../types/claude';
-import { createErrorResponse as createError, createSuccessResponse } from '../utils/response';
+import { createErrorResponse as createError } from '../utils/response';
 import { createResponseHeaders } from '../utils/cors';
 import { getErrorTypeFromStatus, createErrorContext } from '../utils/common';
 import { Logger } from '../utils/logger';
@@ -199,10 +199,4 @@ export class ResponseManager {
   }
 
 
-  /**
-   * 创建成功响应
-   */
-  createSuccessResponse(data: any): Response {
-    return createSuccessResponse(data, true);
-  }
 }

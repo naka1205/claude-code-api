@@ -5,7 +5,7 @@
 
 import { RequestHandler } from './handler';
 import { createCorsHeaders, createResponseHeaders } from './utils/cors';
-import { generateRequestId, headersToObject } from './utils/common';
+import { headersToObject } from './utils/common';
 import { createErrorResponse } from './utils/response';
 import { Logger } from './utils/logger';
 

@@ -35,19 +35,3 @@ export function createErrorResponse(
   });
 }
 
-/**
- * Create a success response with CORS headers
- */
-export function createSuccessResponse(data: any, corsEnabled: boolean = true): Response {
-  const headers = corsEnabled
-    ? createResponseHeaders('application/json')
-    : new Headers({
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache'
-      });
-
-  return new Response(JSON.stringify(data), {
-    status: 200,
-    headers
-  });
-}

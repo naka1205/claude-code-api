@@ -347,43 +347,24 @@ export class ContentTransformer {
     }
 
     // 第二轮：处理thinking内容
-    if (thinkingParts.length > 0) {
+    if (thinkingParts.length > 0 && exposeThinkingToClient) {
       console.log(`[ContentTransformer] Processing ${thinkingParts.length} thinking parts, expose=${exposeThinkingToClient}`);
 
-      if (exposeThinkingToClient) {
-        // 合并所有thinking内容为单个block
-        const combinedThinking = thinkingParts.join('\n\n');
+      // 合并所有thinking内容为单个block
+      const combinedThinking = thinkingParts.join('\n\n');
 
-        // 查找thoughtSignature (在最后一个thinking chunk后的part中)
-        const signaturePart = parts.find(p => 'thoughtSignature' in p);
-        const geminiSignature = signaturePart ? (signaturePart as any).thoughtSignature : undefined;
+      // 查找thoughtSignature (在最后一个thinking chunk后的part中)
+      const signaturePart = parts.find(p => 'thoughtSignature' in p);
+      const geminiSignature = signaturePart ? (signaturePart as any).thoughtSignature : undefined;
 
-        const thinkingBlock: ClaudeThinkingBlock = {
-          type: 'thinking',
-          thinking: combinedThinking,
-          // 正确转换Gemini的thoughtSignature为Claude格式
-          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(
-            geminiSignature,
-            combinedThinking
-          )
-        };
-        blocks.push(thinkingBlock);
-        console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
-      } else {
-        // 当thinking不暴露给客户端时，检查是否有response部分
-        const combinedThinking = thinkingParts.join('\n\n');
-        const separated = ThinkingTransformer.separateThinkingAndResponse(combinedThinking);
-
-        if (separated.response.trim()) {
-          blocks.push({
-            type: 'text',
-            text: separated.response
-          });
-          console.log('[ContentTransformer] Extracted response from thinking content');
-        } else {
-          console.log('[ContentTransformer] No response part found in thinking content, will check for other text content');
-        }
-      }
+      const thinkingBlock: ClaudeThinkingBlock = {
+        type: 'thinking',
+        thinking: combinedThinking,
+        // 直接使用Gemini返回的原始签名
+        signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature)
+      };
+      blocks.push(thinkingBlock);
+      console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
     }
 
     // 第三轮：处理普通文本内容

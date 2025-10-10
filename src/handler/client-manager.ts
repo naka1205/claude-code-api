@@ -3,7 +3,7 @@
  * 管理Gemini API客户端实例
  */
 
-import { GeminiApiClient, createGeminiClient } from '../client';
+import { GeminiApiClient } from '../client';
 import { loadConfig, Config } from '../config';
 
 export class ClientManager {
@@ -22,7 +22,7 @@ export class ClientManager {
   createClient(apiKeys: string[]): GeminiApiClient {
     const appConfig = this.getAppConfig();
 
-    return createGeminiClient(apiKeys, {
+    return new GeminiApiClient(apiKeys, {
       baseUrl: appConfig.gemini.baseUrl,
       timeout: appConfig.gemini.timeout
     });
