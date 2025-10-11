@@ -173,10 +173,10 @@ export class RequestTransformer {
         }
       }
 
-      // 增强systemInstruction以明确工具调用格式
-      if (systemInstruction && geminiRequest.tools && geminiRequest.tools.length > 0) {
-        systemInstruction = this.enhanceSystemInstructionForTools(systemInstruction, geminiRequest.tools);
-      }
+      // 增强systemInstruction以明确工具调用格式 - 已禁用
+      // if (systemInstruction && geminiRequest.tools && geminiRequest.tools.length > 0) {
+      //   systemInstruction = this.enhanceSystemInstructionForTools(systemInstruction, geminiRequest.tools);
+      // }
 
       if (systemInstruction) {
         geminiRequest.systemInstruction = systemInstruction;

@@ -36,25 +36,25 @@ export class ThinkingTransformer {
     default: number;
     canDisable: boolean;
   }> = {
-    'gemini-2.5-pro': {
-      min: 128,
-      max: 12768,
-      default: -1,
-      canDisable: false
-    },
-    'gemini-2.5-flash': {
-      min: 128,
-      max: 6576,
-      default: -1,
-      canDisable: true
-    },
-    'gemini-2.5-flash-lite': {
-      min: 512,
-      max: 4576,
-      default: -1,
-      canDisable: true
-    }
-  };
+      'gemini-2.5-pro': {
+        min: 128,
+        max: 12768,
+        default: -1,
+        canDisable: false
+      },
+      'gemini-2.5-flash': {
+        min: 128,
+        max: 6576,
+        default: -1,
+        canDisable: true
+      },
+      'gemini-2.5-flash-lite': {
+        min: 512,
+        max: 4576,
+        default: -1,
+        canDisable: true
+      }
+    };
 
   /**
    * 转换Claude thinking配置为Gemini格式
@@ -65,7 +65,7 @@ export class ThinkingTransformer {
     claudeRequest: ClaudeRequest
   ): ThinkingConfig | null {
     // 2.0系列不支持thinking
-    if (geminiModel.includes('2.0')) {
+    if (geminiModel.includes('2.0') || geminiModel.includes('flash')) {
       return {
         thinkingBudget: 0,
         includeThoughts: false,
@@ -75,6 +75,7 @@ export class ThinkingTransformer {
     }
 
     const limits = this.THINKING_LIMITS[geminiModel];
+    
     if (!limits) {
       return {
         thinkingBudget: 0,
@@ -133,6 +134,10 @@ export class ThinkingTransformer {
    */
   static modelSupportsThinking(geminiModel: string): boolean {
     if (geminiModel.includes('2.0')) {
+      return false;
+    }
+    // FLASH模型强制禁用推理模式（兼容性问题）
+    if (geminiModel === 'gemini-2.5-flash' || geminiModel === 'gemini-2.5-flash-lite') {
       return false;
     }
     return !!this.THINKING_LIMITS[geminiModel];
