@@ -562,9 +562,9 @@ export class StreamTransformer {
                       }
                     } else {
                       // 无thoughtSignature = 真正的thinking内容
-                      if (exposeThinkingToClient) {
-                        const thinkingText = (part as any).text;
+                      const thinkingText = (part as any).text;
 
+                      if (exposeThinkingToClient) {
                         if (!thinkingBlockStarted) {
                           // 首次thinking:创建block(不设置signature,等待thoughtSignature)
                           thinkingBlockIndex = currentBlockIndex;
@@ -612,6 +612,21 @@ export class StreamTransformer {
                               delta: { type: 'thinking_delta', thinking: '\n' + thinkingText }
                             };
                             sendEvent('content_block_delta', thinkingDelta);
+                          }
+                        }
+                      } else {
+                        // 不暴露thinking，但仍然需要追踪block index以保持连续性
+                        if (!thinkingBlockStarted) {
+                          thinkingBlockIndex = currentBlockIndex;
+                          thinkingBlockStarted = true;
+                          accumulatedThinking = thinkingText;
+                          currentBlockIndex++; // ✅ 关键修复：递增索引以避免跳跃
+                        } else {
+                          // 继续累积thinking内容（虽然不发送，但需要追踪）
+                          if (thinkingText.startsWith(accumulatedThinking)) {
+                            accumulatedThinking = thinkingText;
+                          } else if (!accumulatedThinking.includes(thinkingText.trim())) {
+                            accumulatedThinking += '\n' + thinkingText;
                           }
                         }
                       }
