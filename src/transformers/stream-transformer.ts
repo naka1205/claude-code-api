@@ -315,8 +315,8 @@ export class StreamTransformer {
     let messageStarted = false;
     let streamFinished = false;
     let currentTextContent = '';
-    let textBlockStarted = false;  // 跟踪文本块是否已开始
-    let textBlockIndex = -1;       // <--- 添加：专门跟踪文本块的索引
+    let textBlockStarted = false;
+    let textBlockIndex = -1;
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const messageId = this.generateClaudeMessageId();
@@ -436,11 +436,10 @@ export class StreamTransformer {
                       if (textBlockStarted) {
                         const blockStop: ClaudeStreamEvent = {
                           type: 'content_block_stop',
-                          index: textBlockIndex // <--- 修复：使用正确的文本块索引
+                          index: textBlockIndex
                         };
                         sendEvent('content_block_stop', blockStop);
                         textBlockStarted = false;
-                        currentBlockIndex++;
                       }
 
                       // 发送tool_use block
@@ -494,19 +493,19 @@ export class StreamTransformer {
                       // 确保文本块已开始
                       if (!textBlockStarted) {
                         textBlockStarted = true;
-                        textBlockIndex = currentBlockIndex; // <--- 修复：分配唯一索引
+                        textBlockIndex = currentBlockIndex;
                         const blockStart: ClaudeStreamEvent = {
                           type: 'content_block_start',
-                          index: textBlockIndex, // <--- 修复：使用唯一索引
+                          index: textBlockIndex,
                           content_block: { type: 'text', text: '' } as ClaudeTextBlock
                         };
                         sendEvent('content_block_start', blockStart);
-                        currentBlockIndex++; // <--- 修复：递增主索引
+                        currentBlockIndex++;
                       }
 
                       const delta: ClaudeStreamEvent = {
                         type: 'content_block_delta',
-                        index: textBlockIndex, // <--- 修复：使用正确的文本块索引
+                        index: textBlockIndex,
                         delta: { type: 'text_delta', text: incrementalText }
                       };
                       sendEvent('content_block_delta', delta);
@@ -542,19 +541,19 @@ export class StreamTransformer {
                       if (incrementalText) {
                         if (!textBlockStarted) {
                           textBlockStarted = true;
-                          textBlockIndex = currentBlockIndex; // <--- 修复：分配唯一索引
+                          textBlockIndex = currentBlockIndex;
                           const blockStart: ClaudeStreamEvent = {
                             type: 'content_block_start',
-                            index: textBlockIndex, // <--- 修复：使用唯一索引
+                            index: textBlockIndex,
                             content_block: { type: 'text', text: '' }
                           };
                           sendEvent('content_block_start', blockStart);
-                          currentBlockIndex++; // <--- 修复：递增主索引
+                          currentBlockIndex++;
                         }
 
                         const delta: ClaudeStreamEvent = {
                           type: 'content_block_delta',
-                          index: textBlockIndex, // <--- 修复：使用正确的文本块索引
+                          index: textBlockIndex,
                           delta: { type: 'text_delta', text: incrementalText }
                         };
                         sendEvent('content_block_delta', delta);
@@ -660,7 +659,7 @@ export class StreamTransformer {
 
                     // 结束当前文本块（仅当文本块已开始时）
                     if (textBlockStarted) {
-                      sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex }); // <--- 修复：使用正确的文本块索引
+                      sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex });
                       textBlockStarted = false;
                       currentBlockIndex++;
                     }
@@ -692,7 +691,7 @@ export class StreamTransformer {
                 if (
                   ['STOP', 'MAX_TOKENS'].includes(finishReason.toUpperCase()) &&
                   !textBlockStarted &&
-                  thinkingBlockIndex !== -1
+                  currentBlockIndex !== -1
                 ) {
                   const warningMessage =
                     "The model's response was stopped prematurely, possibly due to output token limits. Only internal thinking processes were generated. Please consider increasing the max_tokens limit.";
@@ -710,7 +709,7 @@ export class StreamTransformer {
                     sendEvent('content_block_stop', { type: 'content_block_stop', index: thinkingBlockIndex });
                   }
                   if (textBlockStarted) {
-                    sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex }); // <--- 修复：使用正确的文本块索引
+                    sendEvent('content_block_stop', { type: 'content_block_stop', index: textBlockIndex });
                   }
 
                   totalOutputTokens =
