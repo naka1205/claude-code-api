@@ -189,10 +189,10 @@ export class ThinkingTransformer {
    */
   static convertGeminiSignatureToClaudeFormat(
     geminiSignature?: string
-  ): string {
+  ): string | undefined {
     if (!geminiSignature) {
-      // 不打印WARNING:第一个thinking chunk通常没有signature,这是正常的
-      return 'sig_pending';
+      // 不返回占位符，返回 undefined 表示没有签名
+      return undefined;
     }
 
     // 直接返回Gemini的原始签名,不做任何转换

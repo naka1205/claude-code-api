@@ -136,11 +136,10 @@ export class ContentTransformer {
 
         // 过滤无效的 thoughtSignature
         // 真实的 Gemini 签名通常 >1000 字符（Base64 编码）
-        // 占位符如 "sig_pending" 只有 11 字符，必须忽略
+        // 无效签名（undefined、null、空字符串或太短）将被忽略
         const hasValidSignature =
           thinkingBlock.signature &&
           typeof thinkingBlock.signature === 'string' &&
-          thinkingBlock.signature !== 'sig_pending' &&
           thinkingBlock.signature.length > 100;
 
         if (hasValidSignature) {
@@ -154,12 +153,8 @@ export class ContentTransformer {
           };
         }
 
-        // 忽略无效的 thinking 块（占位符签名或客户端生成的内容）
+        // 忽略无效的 thinking 块（无签名或客户端生成的内容）
         // Gemini 会根据 generationConfig.thinkingConfig 自动处理推理
-        if (thinkingBlock.signature) {
-          console.warn('[ContentTransformer] Ignoring invalid thinking signature:',
-            thinkingBlock.signature.substring(0, 20) + '...');
-        }
         return null;
 
       default:
@@ -458,12 +453,19 @@ export class ContentTransformer {
 
       const thinkingBlock: ClaudeThinkingBlock = {
         type: 'thinking',
-        thinking: combinedThinking,
-        // 直接使用Gemini返回的原始签名
-        signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature)
+        thinking: combinedThinking
       };
+
+      // 只在有有效签名时添加 signature 字段
+      const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
+      if (claudeSignature) {
+        thinkingBlock.signature = claudeSignature;
+        console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
+      } else {
+        console.log(`[ContentTransformer] Created thinking block without signature`);
+      }
+
       blocks.push(thinkingBlock);
-      console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
     }
 
     // 第三轮：处理普通文本内容

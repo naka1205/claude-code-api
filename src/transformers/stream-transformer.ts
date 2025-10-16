@@ -447,8 +447,8 @@ export class StreamTransformer {
                           index: blockIndex,
                           content_block: {
                             type: 'thinking',
-                            thinking: '',
-                            signature: 'sig_pending'
+                            thinking: ''
+                            // signature 字段在收到 thoughtSignature 时才添加
                           } as ClaudeThinkingBlock
                         };
                         sendEvent('content_block_start', thinkingBlockStart);
@@ -469,19 +469,23 @@ export class StreamTransformer {
                       if (hasSignature) {
                         const geminiSignature = (part as any).thoughtSignature;
                         const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-                        stateManager.setThinkingSignature(claudeSignature);
 
-                        // ⚠️ 关键：发送 thinking block 的最终状态（包含 signature）
-                        // 在 content_block_stop 之前，需要发送一个带有完整 signature 的 delta
-                        const thinkingSignatureDelta: ClaudeStreamEvent = {
-                          type: 'content_block_delta',
-                          index: stateManager.startThinkingBlock(),
-                          delta: {
-                            type: 'thinking_delta',
-                            thinking: ''  // 空内容，仅用于传递 signature 更新
-                          }
-                        };
-                        sendEvent('content_block_delta', thinkingSignatureDelta);
+                        // 只在有有效签名时设置
+                        if (claudeSignature) {
+                          stateManager.setThinkingSignature(claudeSignature);
+
+                          // ⚠️ 关键：发送 thinking block 的最终状态（包含 signature）
+                          // 在 content_block_stop 之前，需要发送一个带有完整 signature 的 delta
+                          const thinkingSignatureDelta: ClaudeStreamEvent = {
+                            type: 'content_block_delta',
+                            index: stateManager.startThinkingBlock(),
+                            delta: {
+                              type: 'thinking_delta',
+                              thinking: ''  // 空内容，仅用于传递 signature 更新
+                            }
+                          };
+                          sendEvent('content_block_delta', thinkingSignatureDelta);
+                        }
 
                         // 结束 thinking 块
                         const thinkingBlockStop: ClaudeStreamEvent = {
@@ -496,7 +500,9 @@ export class StreamTransformer {
                       if ('thoughtSignature' in part) {
                         const geminiSignature = (part as any).thoughtSignature;
                         const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-                        stateManager.setThinkingSignature(claudeSignature);
+                        if (claudeSignature) {
+                          stateManager.setThinkingSignature(claudeSignature);
+                        }
                       }
                     }
                   }
@@ -506,7 +512,9 @@ export class StreamTransformer {
                   else if ('thoughtSignature' in part && 'text' in part && !('thought' in part)) {
                     const geminiSignature = (part as any).thoughtSignature;
                     const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-                    stateManager.setThinkingSignature(claudeSignature);
+                    if (claudeSignature) {
+                      stateManager.setThinkingSignature(claudeSignature);
+                    }
 
                     // 结束 thinking 块（如果正在进行）
                     if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
@@ -592,7 +600,9 @@ export class StreamTransformer {
                     if ('thoughtSignature' in part) {
                       const geminiSignature = (part as any).thoughtSignature;
                       const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-                      stateManager.setThinkingSignature(claudeSignature);
+                      if (claudeSignature) {
+                        stateManager.setThinkingSignature(claudeSignature);
+                      }
 
                       // 结束 thinking 块
                       if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {

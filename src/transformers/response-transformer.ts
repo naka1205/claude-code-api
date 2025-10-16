@@ -245,12 +245,18 @@ export class ResponseTransformer {
         const thinkingText = (part as any).text;
         const geminiSignature = (part as any).thoughtSignature;
 
-        return {
+        const thinkingBlock: ClaudeThinkingBlock = {
           type: 'thinking',
-          thinking: thinkingText,
-          // 直接使用Gemini返回的原始签名
-          signature: ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature)
-        } as ClaudeThinkingBlock;
+          thinking: thinkingText
+        };
+
+        // 只在有有效签名时添加 signature 字段
+        const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
+        if (claudeSignature) {
+          thinkingBlock.signature = claudeSignature;
+        }
+
+        return thinkingBlock;
       } else {
         // 不暴露思考内容时，过滤掉
         // Logger.debug('ResponseTransformer', 'FILTERING OUT thinking content - client did not enable thinking exposure', {
