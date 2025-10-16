@@ -254,6 +254,43 @@ const claudeUsage = {
 };
 ```
 
+## Claude流式输出
+
+### ✅ 场景1: 纯文本响应
+- **描述**: 无thinking,无工具调用,纯文本对话
+- **示例**: 用户问"你好",模型回答"你好!"
+
+### ✅ 场景2: Thinking(暴露) + 文本
+- **描述**: 有thinking过程,暴露给客户端,然后输出文本
+- **配置**: exposeThinkingToClient=true
+
+### ⚠️ 场景3: Thinking(隐藏) + 文本
+- **描述**: 有thinking过程,但不暴露给客户端,只输出文本
+- **配置**: exposeThinkingToClient=false
+
+### ✅ 场景4: Thinking(暴露|隐藏) + 文本 + 工具
+- **描述**: thinking后输出文本,再调用工具
+- **应用**: 复杂任务需要工具辅助
+
+### ⭐ 场景5: 多个Thinking块(暴露|隐藏) + 文本 + 工具
+- **描述**: 8个thinking parts合并为1个thinking块,然后文本和工具
+
+### ⭐ 场景6: Thinking + 工具调用(无文本)
+- **描述**: thinking后直接调用工具,无对话文本
+- **应用**: 搜索、API调用等直接工具场景
+- **关键**: thoughtSignature和functionCall可能同时出现
+
+### ✅ 场景7: 仅工具调用
+- **描述**: 无thinking,无文本,直接工具调用
+- **应用**: 简单的工具调用场景(较少见)
+
+### ⚠️ 场景8: 仅Thinking
+- **描述**: 只生成了thinking,没有实际输出
+- **行为**: 触发error事件
+- **原因**: max_tokens不足或其他限制
+
+---
+
 ### 相关链接
 
 - [Gemini API Token 计数文档](https://ai.google.dev/gemini-api/docs/tokens)
