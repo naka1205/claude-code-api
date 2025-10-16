@@ -1,37 +1,38 @@
 /**
- * CORS utilities for Cloudflare Workers
+ * CORS (Cross-Origin Resource Sharing) utilities
  */
 
+import { CORS_HEADERS } from './constants';
+
 /**
- * Create CORS headers for API responses
+ * Create CORS headers
  */
-export function createCorsHeaders(): Headers {
-  const headers = new Headers();
-  headers.set('Access-Control-Allow-Origin', '*');
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
-  headers.set('Access-Control-Max-Age', '86400');
-  return headers;
+export function createCorsHeaders(origin?: string): HeadersInit {
+  return {
+    [CORS_HEADERS.ALLOW_ORIGIN]: origin || '*',
+    [CORS_HEADERS.ALLOW_METHODS]: 'GET, POST, OPTIONS',
+    [CORS_HEADERS.ALLOW_HEADERS]: 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta',
+    [CORS_HEADERS.MAX_AGE]: '86400',
+  };
 }
 
 /**
- * Add CORS headers to existing headers
+ * Handle CORS preflight request
  */
-export function addCorsHeaders(headers: Headers): Headers {
-  const corsHeaders = createCorsHeaders();
-  corsHeaders.forEach((value, key) => {
-    headers.set(key, value);
+export function handleCorsPreflightRequest(origin?: string): Response {
+  return new Response(null, {
+    headers: createCorsHeaders(origin),
   });
-  return headers;
 }
 
 /**
- * Create headers object with CORS and default headers
+ * Check if origin is allowed
  */
-export function createResponseHeaders(contentType: string = 'application/json'): Headers {
-  const headers = new Headers({
-    'Content-Type': contentType,
-    'Cache-Control': 'no-cache'
-  });
-  return addCorsHeaders(headers);
+export function isOriginAllowed(origin: string, allowedOrigins: string): boolean {
+  if (allowedOrigins === '*') {
+    return true;
+  }
+
+  const allowedList = allowedOrigins.split(',').map((o) => o.trim());
+  return allowedList.includes(origin);
 }

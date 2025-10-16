@@ -1,60 +1,48 @@
 /**
- * 客户端管理器 - Cloudflare Workers版本
- * 管理Gemini API客户端实例
+ * Gemini API client manager with connection pooling
  */
 
-import { GeminiApiClient } from '../client';
-import { loadConfig, Config } from '../config';
+import { GeminiClient } from '../client';
+import type { Config } from '../config';
+import { logger } from '../utils/logger';
 
 export class ClientManager {
-  private config: any;
-  private cachedAppConfig: Config | null = null;
-
-  constructor(config: any) {
-    this.config = config;
-    // 在构造函数中缓存配置
-    this.cachedAppConfig = loadConfig(this.config.env);
-  }
+  private clients: Map<string, GeminiClient> = new Map();
 
   /**
-   * 创建Gemini客户端
+   * Get or create client for given API keys
    */
-  createClient(apiKeys: string[]): GeminiApiClient {
-    const appConfig = this.getAppConfig();
+  getClient(config: Config, apiKeys: string[]): GeminiClient {
+    // Create a cache key from sorted API keys
+    const cacheKey = apiKeys.sort().join(',');
 
-    return new GeminiApiClient(apiKeys, {
-      baseUrl: appConfig.gemini.baseUrl,
-      timeout: appConfig.gemini.timeout
-    });
-  }
-
-  /**
-   * 获取客户端配置
-   */
-  getClientConfig(): any {
-    const appConfig = this.getAppConfig();
-    return {
-      baseUrl: appConfig.gemini.baseUrl,
-      timeout: appConfig.gemini.timeout,
-      apiVersion: appConfig.gemini.apiVersion
-    };
-  }
-
-  /**
-   * 获取超时配置
-   */
-  getTimeout(): number {
-    const appConfig = this.getAppConfig();
-    return appConfig.gemini.timeout;
-  }
-
-  /**
-   * 获取缓存的应用配置
-   */
-  private getAppConfig(): Config {
-    if (!this.cachedAppConfig) {
-      this.cachedAppConfig = loadConfig(this.config.env);
+    if (this.clients.has(cacheKey)) {
+      logger.debug('Reusing existing Gemini client', { keyCount: apiKeys.length });
+      return this.clients.get(cacheKey)!;
     }
-    return this.cachedAppConfig;
+
+    logger.info('Creating new Gemini client', { keyCount: apiKeys.length });
+    const client = new GeminiClient(config, apiKeys);
+    this.clients.set(cacheKey, client);
+
+    return client;
+  }
+
+  /**
+   * Clear all clients (for testing/cleanup)
+   */
+  clearClients(): void {
+    this.clients.clear();
+    logger.debug('Cleared all Gemini clients');
+  }
+
+  /**
+   * Get client count
+   */
+  getClientCount(): number {
+    return this.clients.size;
   }
 }
+
+// Singleton instance
+export const clientManager = new ClientManager();

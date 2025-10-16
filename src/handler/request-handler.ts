@@ -1,360 +1,298 @@
 /**
- * 请求处理器 - Cloudflare Workers版本
- * 处理Claude API兼容请求
+ * Main request handler - orchestrates the entire request processing flow
  */
 
-import { ClaudeRequest, ClaudeCountRequest } from '../types/claude';
-import { RequestValidator } from './request-validator';
-import { RequestTransformer } from '../transformers/request-transformer';
-import { CountTokensTransformer } from '../transformers/count-tokens-transformer';
-import { StreamManager } from './stream-manager';
-import { ClientManager } from './client-manager';
-import { ThinkingTransformer } from '../transformers/thinking-transformer';
-import { ResponseManager } from './response-manager';
-import { ApiKeyManager } from './api-key-manager';
-import { KeyUsageCache } from './key-usage-cache';
-import { ApiResponse } from '../client';
-import { createErrorContext, maskApiKey, maskSensitiveData } from '../utils/common';
-import { Logger } from '../utils/logger';
-
-export interface HandlerConfig {
-  enableValidation: boolean;
-  env?: any;
-  ctx?: any;
-}
-
-export interface RequestContext {
-  method: string;
-  url: string;
-  pathname: string;
-  query: URLSearchParams;
-  headers: Record<string, string>;
-  body?: any;
-}
+import type { ClaudeMessagesRequest, ClaudeCountTokensRequest } from '../types/claude';
+import type { Env } from '../types/common';
+import { getConfig } from '../config';
+import { GeminiClient } from '../client';
+import {
+  validateMessagesRequest,
+  validateCountTokensRequest,
+  normalizeMessagesRequest,
+} from './request-validator';
+import { clientManager } from './client-manager';
+import { responseManager } from './response-manager';
+import { streamManager } from './stream-manager';
+import {
+  transformRequestToGemini,
+  transformCountTokensRequestToGemini,
+} from '../transformers';
+import { logger } from '../utils/logger';
+import {
+  createErrorResponse,
+  createSuccessResponse,
+  createInternalErrorResponse,
+} from '../utils/response';
+import { generateRequestId } from '../utils/common';
+import {
+  requestLogger,
+  logClientRequest,
+  logGeminiRequest,
+  logGeminiResponse,
+  logClaudeResponse,
+  logError,
+} from '../utils/request-logger';
+import { getGeminiModel } from '../models';
 
 export class RequestHandler {
-  private config: HandlerConfig;
-  private validator: RequestValidator;
-  private streamManager: StreamManager;
-  private responseManager: ResponseManager;
-  private apiKeyManager: ApiKeyManager;
-  private clientManager: ClientManager;
+  /**
+   * Handle /v1/messages request
+   */
+  async handleMessages(
+    request: Request,
+    apiKeys: string[],
+    env: Env
+  ): Promise<Response> {
+    const requestId = generateRequestId();
+    const startTime = Date.now();
+    logger.info('Handling messages request', { requestId });
 
-  constructor(config: HandlerConfig) {
-    this.config = config;
-    this.validator = new RequestValidator();
-    this.streamManager = new StreamManager();
-    this.responseManager = new ResponseManager();
-    this.apiKeyManager = new ApiKeyManager();
-    this.clientManager = new ClientManager(config);
+    try {
+      const body: ClaudeMessagesRequest = await request.json();
+
+      requestLogger.createLog(requestId, '/v1/messages', 'POST');
+      logClientRequest(requestId, request.headers, body);
+
+      const validation = validateMessagesRequest(body);
+      if (!validation.valid) {
+        logger.warn('Invalid request', { requestId, error: validation.error });
+        logError(requestId, new Error(validation.error!), 'client_request');
+        return createErrorResponse('invalid_request_error', validation.error!);
+      }
+
+      const claudeRequest = normalizeMessagesRequest(body);
+
+      const config = getConfig(env);
+      const client = clientManager.getClient(config, apiKeys);
+
+      const geminiRequest = transformRequestToGemini(claudeRequest);
+
+      const geminiModel = getGeminiModel(claudeRequest.model);
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+      logGeminiRequest(requestId, geminiUrl, 'POST', geminiRequest);
+
+      if (claudeRequest.stream) {
+        return this.handleStreamingMessages(
+          claudeRequest,
+          geminiRequest,
+          client,
+          requestId,
+          request.headers
+        );
+      }
+
+      logger.debug('Processing non-streaming request', { requestId });
+
+      const geminiResponse = await client.generateContent(
+        geminiRequest,
+        claudeRequest.model
+      );
+
+      logGeminiResponse(requestId, 200, 'OK', new Headers(), geminiResponse);
+
+      const claudeResponse = responseManager.processMessagesResponse(
+        geminiResponse,
+        claudeRequest.model,
+        requestId
+      );
+
+      logClaudeResponse(requestId, 200, claudeResponse);
+
+      logger.info('Messages request completed', {
+        requestId,
+        duration: Date.now() - startTime,
+        inputTokens: claudeResponse.usage.input_tokens,
+        outputTokens: claudeResponse.usage.output_tokens,
+        model: claudeRequest.model,
+      });
+
+      return createSuccessResponse(claudeResponse);
+    } catch (error) {
+      logger.error('Messages request failed', error, { requestId });
+      logError(requestId, error as Error, 'gemini_response');
+      return createInternalErrorResponse((error as Error).message);
+    }
   }
 
   /**
-   * 处理消息请求
+   * Handle streaming messages request
    */
-  async handleMessagesRequest(context: RequestContext, request: Request, requestId: string): Promise<Response> {
-    const startTime = Date.now();
+  private async handleStreamingMessages(
+    claudeRequest: ClaudeMessagesRequest,
+    geminiRequest: any,
+    client: GeminiClient,
+    requestId: string,
+    headers: Headers
+  ): Promise<Response> {
+    logger.debug('Processing streaming request', { requestId });
 
-    try {
-      const claudeRequest = context.body as ClaudeRequest;
+    const { response, writer } = streamManager.createStreamResponse();
 
-      // 记录客户端请求
-      Logger.logRequest(requestId, claudeRequest.model, claudeRequest);
-
-      // 1. 提取API密钥
-      const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
-      if (!apiKeys || apiKeys.length === 0) {
-        return this.responseManager.createErrorResponse(401, 'API key required');
-      }
-
-      // 2. 验证请求
-      if (this.config.enableValidation) {
-        const validationError = this.validator.validateClaudeRequest(context.body);
-        if (validationError) {
-          
-          return this.responseManager.createErrorResponse(400, validationError);
-        }
-
-      }
-
-      // 3. 选择最佳API密钥
-      const geminiModel = this.getGeminiModel(claudeRequest.model);
-      const selectedKey = await KeyUsageCache.pickBestKey(
-        apiKeys,
-        geminiModel
-      );
-
-      if (!selectedKey) {
-        return this.responseManager.createErrorResponse(429, 'No available API keys');
-      }
-
-      await KeyUsageCache.reserve(selectedKey);
-
-      let exposeThinkingToClient = false;
-
-      if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
-        const thinkingConfig = ThinkingTransformer.transformThinking(
-          (claudeRequest as any).thinking,
-          geminiModel,
-          claudeRequest
-        );
-        exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
-
-      } else {
-      }
-
-      // 4. 转换请求
-      const transformOptions = {
-        enableSpecialToolHandling: false,
-        maxOutputTokens: claudeRequest.max_tokens,
-        safeOutputTokenLimiting: true,
-        enableThinking: true  // 总是启用thinking处理，让模型决定是否使用
-      };
-
-      const transformResult = await RequestTransformer.transformRequest(claudeRequest, transformOptions);
-      const geminiRequest = transformResult.request;
-
-
-      // 记录警告信息
-      if (transformResult.warnings && transformResult.warnings.length > 0) {
-        // skip warn logs
-      }
-
-      // 5. 创建客户端（使用选定的密钥）
-      const client = this.clientManager.createClient([selectedKey]);
-
-      // 6. 确定端点和流式模式
-      const isStreamRequest = claudeRequest.stream || false;
-      const endpoint = this.getGeminiEndpoint(claudeRequest.model, isStreamRequest);
-
-      // 7. 发送请求 - 添加更好的错误处理
+    (async () => {
       try {
-        if (isStreamRequest) {
-          // 流式响应
-          const streamResponse = await client.sendRequest(endpoint, geminiRequest, true, requestId);
-
-          const duration = Date.now() - startTime;
-
-          if ('stream' in streamResponse) {
-            return this.streamManager.handleStreamResponse(
-              streamResponse.stream,
-              claudeRequest.model,
-              streamResponse.headers,
-              exposeThinkingToClient,
-              requestId
-            );
-          } else {
-            // 非流式错误响应 - 直接转换错误格式返回
-            if ((streamResponse as any).statusCode >= 400) {
-              await KeyUsageCache.onError(selectedKey, (streamResponse as any).statusCode);
-            }
-            return await this.responseManager.handleGeminiResponse({
-              statusCode: (streamResponse as any).statusCode,
-              headers: (streamResponse as any).headers,
-              body: (streamResponse as any).body || {},
-              isStream: false
-            }, claudeRequest.model, exposeThinkingToClient, requestId);
-          }
-        } else {
-          // 非流式响应
-          const response = await client.sendRequest(endpoint, geminiRequest, false, requestId);
-
-          const duration = Date.now() - startTime;
-
-          // 错误处理 - 记录密钥错误状态
-          if ((response as ApiResponse).statusCode >= 400) {
-            await KeyUsageCache.onError(selectedKey, (response as ApiResponse).statusCode);
-          }
-
-          return await this.responseManager.handleGeminiResponse(
-            response as ApiResponse,
-            claudeRequest.model,
-            exposeThinkingToClient,
-            requestId
-          );
-        }
-      } catch (networkError) {
-        // 网络错误 - 记录详细信息并返回错误
-        const errorContext = createErrorContext(
-          'RequestHandler',
-          'handleMessagesRequest - Network Request',
-          networkError,
-          {
-            requestId: requestId,
-            selectedKeyMasked: maskApiKey(selectedKey),
-            endpoint,
-            geminiModel,
-            isStream: claudeRequest.stream,
-            duration: Date.now() - startTime
-          }
+        const geminiStream = client.generateContentStream(
+          geminiRequest,
+          claudeRequest.model
         );
 
-        console.error('[RequestHandler] Network error to Gemini API:', {
-          ...errorContext,
-          networkDetails: {
-            timeout: this.clientManager.getTimeout?.() || 'unknown',
-            retryable: networkError instanceof Error &&
-              ['ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'].includes((networkError as any).code)
-          }
-        });
+        const betaHeader = headers.get('anthropic-beta') || '';
+        const betaFlags = typeof betaHeader === 'string' ? betaHeader.split(',').map(s => s.trim()) : [];
 
-        await KeyUsageCache.onError(selectedKey, 500);
-        return this.responseManager.createErrorResponse(
-          502,
-          `Failed to connect to Gemini API: ${errorContext.originalError.message}`
+        await streamManager.streamResponse(
+          geminiStream,
+          claudeRequest.model,
+          writer,
+          requestId,
+          claudeRequest.thinking,
+          betaFlags
         );
+      } catch (error) {
+        logger.error('Streaming failed', error, { requestId });
       }
+    })();
 
-    } catch (error) {
-      const errorContext = createErrorContext(
-        'RequestHandler',
-        'handleMessagesRequest',
-        error,
-        {
-          requestId: requestId,
-          context: {
-            method: context.method,
-            pathname: context.pathname,
-            hasBody: !!context.body,
-            headers: maskSensitiveData(Object.keys(context.headers)),
-            bodyType: context.body ? typeof context.body : 'undefined',
-            bodySize: context.body ? JSON.stringify(context.body).length : 0
-          },
-          duration: Date.now() - startTime
-        }
-      );
-
-      console.error('[RequestHandler] Messages request error:', errorContext);
-
-      return this.responseManager.createErrorResponse(
-        500,
-        errorContext.originalError.message || 'Internal server error'
-      );
-    }
+    return response;
   }
 
   /**
-   * 处理token计数请求
+   * Handle /v1/messages/count_tokens request
    */
-  async handleCountTokensRequest(context: RequestContext, request: Request, requestId: string): Promise<Response> {
+  async handleCountTokens(
+    request: Request,
+    apiKeys: string[],
+    env: Env
+  ): Promise<Response> {
+    const requestId = generateRequestId();
     const startTime = Date.now();
+    logger.info('Handling count tokens request', { requestId });
 
     try {
-      const countRequest = context.body as ClaudeCountRequest;
+      // Parse request body
+      const body: ClaudeCountTokensRequest = await request.json();
 
-      // 记录count_tokens请求
-      Logger.logRequest(requestId, countRequest.model, countRequest);
-
-      // 1. 提取API密钥
-      const apiKeys = this.apiKeyManager.extractApiKeys(context.headers);
-      if (!apiKeys || apiKeys.length === 0) {
-        return this.responseManager.createErrorResponse(401, 'API key required');
+      // Validate request
+      const validation = validateCountTokensRequest(body);
+      if (!validation.valid) {
+        logger.warn('Invalid request', { requestId, error: validation.error });
+        return createErrorResponse('invalid_request_error', validation.error!);
       }
 
-      // 2. 验证请求
-      const validationError = CountTokensTransformer.validateCountRequest(countRequest);
-      if (validationError) {
-        return this.responseManager.createErrorResponse(400, validationError);
-      }
+      // Get configuration and client
+      const config = getConfig(env);
+      const client = clientManager.getClient(config, apiKeys);
 
-      // 3. 选择最佳API密钥
-      const geminiModel = this.getGeminiModel(countRequest.model);
-      const selectedKey = await KeyUsageCache.pickBestKey(apiKeys, geminiModel);
+      // Transform request
+      const geminiRequest = transformCountTokensRequestToGemini(body);
 
-      if (!selectedKey) {
-        return this.responseManager.createErrorResponse(429, 'No available API keys');
-      }
+      // Call Gemini API
+      const geminiResponse = await client.countTokens(geminiRequest, body.model);
 
-      // 4. 转换请求
-      const geminiCountRequest = await CountTokensTransformer.transformCountRequest(countRequest);
+      // Process response
+      const claudeResponse = responseManager.processCountTokensResponse(
+        geminiResponse,
+        requestId
+      );
 
-      // 5. 创建客户端
-      const client = this.clientManager.createClient([selectedKey]);
+      logger.info('Count tokens request completed', {
+        requestId,
+        duration: Date.now() - startTime,
+        tokens: claudeResponse.input_tokens,
+        model: body.model,
+      });
 
-      // 6. 发送计数请求
-      const endpoint = `/v1beta/models/${geminiModel}:countTokens`;
-      const response = await client.sendRequest(endpoint, geminiCountRequest, false, requestId);
-
-      // 7. 处理响应
-      if ('body' in response && response.body) {
-        if (response.statusCode >= 400) {
-          await KeyUsageCache.onError(selectedKey, response.statusCode);
-
-          return this.responseManager.createErrorResponse(
-            response.statusCode,
-            response.body.error?.message || 'Failed to count tokens'
-          );
-        }
-
-        const claudeResponse = CountTokensTransformer.transformCountResponse(response.body);
-
-        return new Response(
-          JSON.stringify(claudeResponse),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'no-cache'
-            }
-          }
-        );
-      }
-
-      return this.responseManager.createErrorResponse(500, 'Invalid response from Gemini API');
-
+      return createSuccessResponse(claudeResponse);
     } catch (error) {
-      const errorContext = createErrorContext(
-        'RequestHandler',
-        'handleCountTokensRequest',
-        error,
-        {
-          requestId: requestId,
-          model: context.body?.model,
-          duration: Date.now() - startTime
-        }
-      );
-
-      console.error('[RequestHandler] Count tokens error:', errorContext);
-
-      return this.responseManager.createErrorResponse(
-        500,
-        errorContext.originalError.message || 'Internal server error'
-      );
+      logger.error('Count tokens request failed', error, { requestId });
+      return createInternalErrorResponse((error as Error).message);
     }
   }
 
   /**
-   * 获取Gemini模型名称
+   * Handle /health request
    */
-  private getGeminiModel(model: string): string {
+  handleHealth(): Response {
+    return createSuccessResponse({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'claude-to-gemini-api',
+    });
+  }
+
+  /**
+   * Handle /logs request - 获取请求日志列表
+   */
+  handleLogs(request: Request): Response {
+    const url = new URL(request.url);
+    const requestId = url.searchParams.get('requestId');
+    const limit = parseInt(url.searchParams.get('limit') || '50');
+    const clear = url.searchParams.get('clear') === 'true';
+
     try {
-      const modelMapper = ModelMapper.getInstance();
-      return modelMapper.mapModel(model);
-    } catch (error) {
-      const errorContext = createErrorContext(
-        'RequestHandler',
-        'getGeminiModel',
-        error,
-        {
-          inputModel: model,
-          availableModels: ModelMapper.getInstance().getSupportedModels?.() || 'unknown'
+      // 如果指定了 clear，清空所有日志
+      if (clear) {
+        requestLogger.clear();
+        return createSuccessResponse({
+          message: 'All logs cleared',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // 如果指定了 requestId，返回特定请求的日志
+      if (requestId) {
+        const log = requestLogger.getLog(requestId);
+        if (!log) {
+          return createErrorResponse('not_found', `Log not found for requestId: ${requestId}`);
         }
-      );
+        return createSuccessResponse({ log });
+      }
 
-      console.error('[RequestHandler] Model mapping error:', errorContext);
+      // 返回所有日志（分页）
+      const allLogs = requestLogger.getAllLogs();
+      const logs = allLogs.slice(0, limit);
+      const stats = requestLogger.getStats();
 
-      throw new Error(`Unsupported model: ${model}. ${errorContext.originalError.message}`);
+      return createSuccessResponse({
+        logs,
+        stats,
+        pagination: {
+          total: allLogs.length,
+          returned: logs.length,
+          limit,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error('Failed to handle logs request', error);
+      return createInternalErrorResponse((error as Error).message);
     }
   }
 
   /**
-   * 获取Gemini端点
+   * Handle /logs/:requestId request - 获取特定请求的日志详情
    */
-  private getGeminiEndpoint(model: string, isStream?: boolean): string {
-    const geminiModel = this.getGeminiModel(model);
-    const action = isStream ? 'streamGenerateContent' : 'generateContent';
-    return `/v1beta/models/${geminiModel}:${action}`;
+  handleLogById(request: Request): Response {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split('/');
+    const requestId = pathParts[pathParts.length - 1];
+
+    try {
+      if (!requestId) {
+        return createErrorResponse('invalid_request_error', 'Missing requestId');
+      }
+
+      const log = requestLogger.getLog(requestId);
+      if (!log) {
+        return createErrorResponse('not_found', `Log not found for requestId: ${requestId}`);
+      }
+
+      return createSuccessResponse({ log });
+    } catch (error) {
+      logger.error('Failed to handle log by id request', error, { requestId });
+      return createInternalErrorResponse((error as Error).message);
+    }
   }
 }
 
-import { ModelMapper } from '../models';
+// Singleton instance
+export const requestHandler = new RequestHandler();

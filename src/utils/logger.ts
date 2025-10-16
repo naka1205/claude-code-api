@@ -1,106 +1,104 @@
 /**
- * 数据记录器
- * 临时调试方案 - 注释掉initialize()调用即可禁用
+ * Structured logging utility
  */
 
-interface LogEntry {
-  requestId: string;
-  timestamp: string;
-  model: string;
-  isStream: boolean;
-  clientRequest?: any;
-  geminiData?: any; // 统一字段：非流式时存完整响应，流式时存chunks数组
-  claudeEvents?: any[]; // 转换后的Claude SSE事件数组
+import { LOG_LEVELS } from './constants';
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface LogContext {
+  requestId?: string;
+  model?: string;
+  streaming?: boolean;
+  [key: string]: any;
 }
 
 export class Logger {
-  private static logs = new Map<string, LogEntry>();
-  private static enabled = false; // 默认禁用
+  private enableLogging: boolean;
+  private minLevel: LogLevel;
 
-  static initialize() {
-    this.enabled = true;
-    console.log('🟢 Logger enabled - GET /logs to retrieve data');
+  constructor(enableLogging: boolean = true, minLevel: LogLevel = 'info') {
+    this.enableLogging = enableLogging;
+    this.minLevel = minLevel;
   }
 
-  static logRequest(requestId: string, model: string, clientRequest: any) {
-    if (!this.enabled) return;
+  /**
+   * Check if log level should be output
+   */
+  private shouldLog(level: LogLevel): boolean {
+    if (!this.enableLogging) return false;
 
-    const isStream = clientRequest.stream === true;
+    const levels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+    const currentLevelIndex = levels.indexOf(this.minLevel);
+    const messageLevelIndex = levels.indexOf(level);
 
-    this.logs.set(requestId, {
-      requestId,
-      timestamp: new Date().toISOString(),
-      model,
-      isStream,
-      clientRequest
-    });
-    console.log(`📝 Logged ${isStream ? 'stream' : 'regular'} request ${requestId}`);
+    return messageLevelIndex >= currentLevelIndex;
   }
 
-  static logResponse(requestId: string, geminiResponse: any) {
-    if (!this.enabled) return;
+  /**
+   * Format log message
+   */
+  private formatMessage(level: LogLevel, message: string, context?: LogContext): string {
+    const timestamp = new Date().toISOString();
+    const contextStr = context ? ` ${JSON.stringify(context)}` : '';
+    return `[${timestamp}] [${level.toUpperCase()}] ${message}${contextStr}`;
+  }
 
-    const entry = this.logs.get(requestId);
-    if (entry) {
-      if (entry.isStream) {
-        // 流式请求，初始化chunks数组
-        entry.geminiData = [];
-      } else {
-        // 非流式请求，直接存储响应
-        entry.geminiData = geminiResponse;
-      }
-      this.logs.set(requestId, entry);
-      console.log(`📝 Logged ${entry.isStream ? 'stream init' : 'response'} ${requestId}`);
+  /**
+   * Debug log
+   */
+  debug(message: string, context?: LogContext): void {
+    if (this.shouldLog('debug')) {
+      console.debug(this.formatMessage('debug', message, context));
     }
   }
 
-  static logStreamChunk(requestId: string, chunk: any) {
-    if (!this.enabled) return;
-
-    const entry = this.logs.get(requestId);
-    if (entry && entry.isStream) {
-      if (!entry.geminiData) entry.geminiData = [];
-      entry.geminiData.push(chunk);
-      this.logs.set(requestId, entry);
+  /**
+   * Info log
+   */
+  info(message: string, context?: LogContext): void {
+    if (this.shouldLog('info')) {
+      console.log(this.formatMessage('info', message, context));
     }
   }
 
-  static logClaudeEvent(requestId: string, eventType: string, eventData: any) {
-    if (!this.enabled) return;
-
-    const entry = this.logs.get(requestId);
-    if (entry) {
-      if (!entry.claudeEvents) entry.claudeEvents = [];
-      entry.claudeEvents.push({
-        type: eventType,
-        data: eventData,
-        timestamp: new Date().toISOString()
-      });
-      this.logs.set(requestId, entry);
+  /**
+   * Warning log
+   */
+  warn(message: string, context?: LogContext): void {
+    if (this.shouldLog('warn')) {
+      console.warn(this.formatMessage('warn', message, context));
     }
   }
 
-  static getAllLogs() {
-    return Array.from(this.logs.values());
+  /**
+   * Error log
+   */
+  error(message: string, error?: any, context?: LogContext): void {
+    if (this.shouldLog('error')) {
+      const errorContext = {
+        ...context,
+        error: error?.message || error,
+        stack: error?.stack,
+      };
+      console.error(this.formatMessage('error', message, errorContext));
+    }
   }
 
-  static getLog(requestId: string) {
-    return this.logs.get(requestId);
+  /**
+   * Set minimum log level
+   */
+  setLevel(level: LogLevel): void {
+    this.minLevel = level;
   }
 
-  static clear() {
-    const count = this.logs.size;
-    this.logs.clear();
-    return count;
-  }
-
-  static getStats() {
-    return {
-      total: this.logs.size,
-      memoryUsage: `${Math.round(JSON.stringify(Array.from(this.logs.values())).length / 1024)} KB`
-    };
+  /**
+   * Enable/disable logging
+   */
+  setEnabled(enabled: boolean): void {
+    this.enableLogging = enabled;
   }
 }
 
-// 开发调试模式 - 部署生产时注释掉下面这行即可禁用整个数据记录功能
-Logger.initialize();
+// Default logger instance
+export const logger = new Logger();

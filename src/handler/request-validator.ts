@@ -1,112 +1,150 @@
 /**
- * 请求验证器 - Cloudflare Workers版本
- * 验证Claude API请求格式
+ * Request validation and normalization
  */
 
-import { ClaudeRequest, ClaudeCountRequest } from '../types/claude';
+import type { ClaudeMessagesRequest, ClaudeCountTokensRequest } from '../types/claude';
+import { LIMITS } from '../utils/constants';
+import { shouldIncludeThinking } from '../transformers/thinking-transformer';
 
-export class RequestValidator {
-  /**
-   * 验证Claude消息请求
-   */
-  validateClaudeRequest(body: any): string | null {
-    if (!body) {
-      return 'Request body is required';
-    }
+export interface ValidationResult {
+  valid: boolean;
+  error?: string;
+}
 
-    // 验证必需字段
-    if (!body.model) {
-      return 'model field is required';
-    }
+function extractBetaFlags(headers: any): string[] {
+  const betaHeader = headers?.['anthropic-beta'];
+  if (typeof betaHeader === 'string') {
+    return betaHeader.split(',').map(s => s.trim());
+  }
+  return [];
+}
 
-    if (!body.messages || !Array.isArray(body.messages)) {
-      return 'messages field must be an array';
-    }
-
-    if (body.messages.length === 0) {
-      return 'messages array cannot be empty';
-    }
-
-    if (typeof body.max_tokens !== 'number' || body.max_tokens <= 0) {
-      return 'max_tokens must be a positive number';
-    }
-
-    // 验证消息格式
-    for (let i = 0; i < body.messages.length; i++) {
-      const message = body.messages[i];
-      if (!message.role || !['user', 'assistant'].includes(message.role)) {
-        return `Invalid role in message ${i}: ${message.role}`;
-      }
-
-      if (!message.content) {
-        return `Content is required in message ${i}`;
-      }
-    }
-
-    // 验证可选参数
-    if (body.temperature !== undefined) {
-      if (typeof body.temperature !== 'number' || body.temperature < 0 || body.temperature > 1) {
-        return 'temperature must be between 0 and 1';
-      }
-    }
-
-    if (body.top_p !== undefined) {
-      if (typeof body.top_p !== 'number' || body.top_p < 0 || body.top_p > 1) {
-        return 'top_p must be between 0 and 1';
-      }
-    }
-
-    if (body.top_k !== undefined) {
-      if (typeof body.top_k !== 'number' || body.top_k < 1) {
-        return 'top_k must be at least 1';
-      }
-    }
-
-    return null;
+/**
+ * Validate messages request
+ */
+export function validateMessagesRequest(request: any): ValidationResult {
+  // Check required fields
+  if (!request.model) {
+    return { valid: false, error: 'Missing required field: model' };
   }
 
-  /**
-   * 验证计数请求
-   */
-  validateCountRequest(body: any): string | null {
-    if (!body) {
-      return 'Request body is required';
-    }
-
-    if (!body.model) {
-      return 'model field is required';
-    }
-
-    if (!body.messages || !Array.isArray(body.messages)) {
-      return 'messages field must be an array';
-    }
-
-    if (body.messages.length === 0) {
-      return 'messages array cannot be empty';
-    }
-
-    return null;
+  if (!request.messages) {
+    return { valid: false, error: 'Missing required field: messages' };
   }
 
-  /**
-   * 验证工具定义
-   */
-  validateTools(tools: any[]): string | null {
-    if (!Array.isArray(tools)) {
-      return 'tools must be an array';
-    }
-
-    for (let i = 0; i < tools.length; i++) {
-      const tool = tools[i];
-      if (!tool.name) {
-        return `Tool ${i} must have a name`;
-      }
-
-      if (tool.input_schema && typeof tool.input_schema !== 'object') {
-        return `Tool ${i} input_schema must be an object`;
-      }
-    }
-
-    return null;
+  if (!Array.isArray(request.messages)) {
+    return { valid: false, error: 'Field messages must be an array' };
   }
+
+  if (request.messages.length === 0) {
+    return { valid: false, error: 'Field messages cannot be empty' };
+  }
+
+  if (request.messages.length > LIMITS.MAX_MESSAGES) {
+    return { valid: false, error: `Too many messages (max ${LIMITS.MAX_MESSAGES})` };
+  }
+
+  if (request.max_tokens === undefined) {
+    return { valid: false, error: 'Missing required field: max_tokens' };
+  }
+
+  if (typeof request.max_tokens !== 'number') {
+    return { valid: false, error: 'Field max_tokens must be a number' };
+  }
+
+  if (request.max_tokens < LIMITS.MAX_TOKENS_MIN) {
+    return { valid: false, error: `Field max_tokens must be >= ${LIMITS.MAX_TOKENS_MIN}` };
+  }
+
+  // Validate temperature if present
+  if (request.temperature !== undefined) {
+    if (typeof request.temperature !== 'number') {
+      return { valid: false, error: 'Field temperature must be a number' };
+    }
+    if (request.temperature < LIMITS.MIN_TEMPERATURE || request.temperature > LIMITS.MAX_TEMPERATURE) {
+      return { valid: false, error: `Field temperature must be between ${LIMITS.MIN_TEMPERATURE} and ${LIMITS.MAX_TEMPERATURE}` };
+    }
+  }
+
+  // Validate top_p if present
+  if (request.top_p !== undefined) {
+    if (typeof request.top_p !== 'number') {
+      return { valid: false, error: 'Field top_p must be a number' };
+    }
+    if (request.top_p < LIMITS.MIN_TOP_P || request.top_p > LIMITS.MAX_TOP_P) {
+      return { valid: false, error: `Field top_p must be between ${LIMITS.MIN_TOP_P} and ${LIMITS.MAX_TOP_P}` };
+    }
+  }
+
+  // Validate top_k if present
+  if (request.top_k !== undefined) {
+    if (typeof request.top_k !== 'number') {
+      return { valid: false, error: 'Field top_k must be a number' };
+    }
+    if (request.top_k < LIMITS.MIN_TOP_K) {
+      return { valid: false, error: `Field top_k must be >= ${LIMITS.MIN_TOP_K}` };
+    }
+  }
+
+  // Validate messages format
+  for (let i = 0; i < request.messages.length; i++) {
+    const message = request.messages[i];
+
+    if (!message.role) {
+      return { valid: false, error: `Message at index ${i} missing role` };
+    }
+
+    if (message.role !== 'user' && message.role !== 'assistant') {
+      return { valid: false, error: `Message at index ${i} has invalid role: ${message.role}` };
+    }
+
+    if (!message.content) {
+      return { valid: false, error: `Message at index ${i} missing content` };
+    }
+  }
+
+  // Validate thinking config constraints (Extended Thinking limitations)
+  if (request.thinking?.type === 'enabled') {
+    // Cannot be used with forced tool use
+    if (request.tool_choice?.type === 'tool') {
+      return {
+        valid: false,
+        error: 'Extended thinking cannot be used with forced tool use (tool_choice.type="tool")'
+      };
+    }
+
+    // max_tokens > 21333 requires streaming
+    if (request.max_tokens > 21333 && !request.stream) {
+      return {
+        valid: false,
+        error: 'Extended thinking with max_tokens > 21333 requires stream=true'
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validate count tokens request
+ */
+export function validateCountTokensRequest(request: any): ValidationResult {
+  if (!request.model) {
+    return { valid: false, error: 'Missing required field: model' };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Normalize messages request (apply defaults)
+ */
+export function normalizeMessagesRequest(request: ClaudeMessagesRequest): ClaudeMessagesRequest {
+  return {
+    ...request,
+    stream: request.stream ?? false,
+    temperature: request.temperature,
+    top_p: request.top_p,
+    top_k: request.top_k,
+  };
 }
