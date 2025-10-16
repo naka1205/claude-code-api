@@ -1,13 +1,100 @@
-# Gemini API 官方功能与工具完整列表
+# Gemini API 使用指南
 
-## 核心功能
+本文档提供 Gemini API 的简明使用指南和代码示例。完整的功能说明和原理解析请参见项目主文档 [README.md](../README.md)。
 
-### 1. 文本生成 (Text Generation)
-- **功能描述**: 从文本、图像、视频和音频等多种输入生成文本输出
-- **文档地址**: https://ai.google.dev/gemini-api/docs/text-generation
-- **支持特性**: 流式响应、多轮对话、系统指令
+**官方文档**: https://ai.google.dev/gemini-api/docs
 
-#### 示例（REST/cURL，来自官方文档）
+---
+
+## 目录
+
+- [文本生成](#文本生成)
+- [思考功能 (Thinking)](#思考功能-thinking)
+- [多模态理解](#多模态理解)
+- [函数调用 (Function Calling)](#函数调用-function-calling)
+- [Google 搜索集成](#google-搜索集成)
+- [其他功能](#其他功能)
+
+---
+
+## 文本生成
+
+### 基础文本生成
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "contents": [{
+      "parts": [{ "text": "How does AI work?" }]
+    }]
+  }'
+```
+
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{
+      parts: [{ text: 'How does AI work?' }]
+    }]
+  })
+});
+const data = await response.json();
+console.log(data.candidates[0].content.parts[0].text);
+```
+
+### 系统指令配置
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "systemInstruction": {
+      "parts": [{ "text": "You are a professional technical writer." }]
+    },
+    "contents": [{
+      "parts": [{ "text": "Explain quantum computing" }]
+    }],
+    "generationConfig": {
+      "temperature": 0.3,
+      "maxOutputTokens": 200
+    }
+  }'
+```
+
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: 'You are a professional technical writer.' }]
+    },
+    contents: [{
+      parts: [{ text: 'Explain quantum computing' }]
+    }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 200
+    }
+  })
+});
+```
+
+### 多轮对话
+
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
@@ -15,181 +102,671 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
   -X POST \
   -d '{
     "contents": [
-      {
-        "parts": [
-          { "text": "How does AI work?" }
-        ]
-      }
+      { "role": "user", "parts": [{ "text": "What is the capital of France?" }] },
+      { "role": "model", "parts": [{ "text": "The capital of France is Paris." }] },
+      { "role": "user", "parts": [{ "text": "What is its population?" }] }
     ]
   }'
 ```
 
-说明：以上端点与字段取自官方页面“Text generation”示例，模型使用 `gemini-2.5-flash`，请求头需提供 `x-goog-api-key`。
+```javascript
+const messages = [
+  { role: 'user', parts: [{ text: 'What is the capital of France?' }] },
+  { role: 'model', parts: [{ text: 'The capital of France is Paris.' }] },
+  { role: 'user', parts: [{ text: 'What is its population?' }] }
+];
 
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          { "text": "..." }
-        ]
-      }
-    }
-  ]
-}
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ contents: messages })
+});
 ```
 
-### 2. 图像生成 (Image Generation) 
-- **功能描述**: 根据文本提示生成高质量图像内容
-- **文档地址**: https://ai.google.dev/gemini-api/docs/image-generation
-- **支持特性**: 多种图像格式、风格控制
+---
 
-#### 示例（REST/cURL，来自官方文档）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [
-      {
-        "parts": [
-          { "text": "Create an image of a nano banana dish at a fine dining restaurant, Gemini themed." }
-        ]
-      }
-    ]
-  }'
-```
+## 思考功能 (Thinking)
 
-说明：图像生成功能在官方文档中由 `Imagen`/Gemini 图像能力提供，最新示例同样通过 `:generateContent` 调用，模型以 2.5 代 Flash 图像能力为主（页面会随发布更新而变动）。
+### 启用思维摘要
 
-#### 响应示例（节选，Base64 图像）
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          {
-            "inlineData": {
-              "mimeType": "image/png",
-              "data": "iVBORw0KGgoAAAANSUhEUgAA..."
-            }
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-### 3. 语音生成 (Speech Generation)
-- **功能描述**: 将文本转换为自然语音输出
-- **文档地址**: https://ai.google.dev/gemini-api/docs/speech-generation
-- **支持特性**: 多种语言、音色选择
-
-#### 示例（REST/cURL，单说话人 TTS，来自官方文档）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{
-        "contents": [{
-          "parts":[{
-            "text": "Say cheerfully: Have a wonderful day!"
-          }]
-        }],
-        "generationConfig": {
-          "responseModalities": ["AUDIO"],
-          "speechConfig": {
-            "voiceConfig": {
-              "prebuiltVoiceConfig": {
-                "voiceName": "Kore"
-              }
-            }
-          }
-        },
-        "model": "gemini-2.5-flash-preview-tts"
-    }' | jq -r '.candidates[0].content.parts[0].inlineData.data' | \
-          base64 --decode >out.pcm
-# 可选：将 PCM 转为 WAV（需本地安装 ffmpeg）
-ffmpeg -f s16le -ar 24000 -ac 1 -i out.pcm out.wav
-```
-
-#### 响应示例（节选，Base64 音频）
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [{
-          "inlineData": {
-            "mimeType": "audio/pcm",   // 响应为PCM数据（示例中直接导出 .pcm）
-            "data": "...base64..."
-          }
-        }]
-      }
-    }
-  ]
-}
-```
-
-### 4. 长上下文处理 (Long Context)
-- **功能描述**: 处理包含大量上下文信息的输入，支持超长文档理解
-- **文档地址**: https://ai.google.dev/gemini-api/docs/long-context
-- **支持特性**: 百万级token处理、上下文缓存
-
-#### 示例（分段提供长文档 + 上下文缓存）
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
   -d '{
-    "cachedContent": {
-      "role": "user",
-      "parts": [{ "text": "[这里是长文档的第一部分...省略]" }]
-    },
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{ "text": "基于缓存的长文档，提取所有关键结论并编号" }]
+    "contents": [{
+      "parts": [{ "text": "Solve: 3x^2 + 5x - 2 = 0" }]
+    }],
+    "generationConfig": {
+      "thinkingConfig": {
+        "thinkingBudget": 2048,
+        "includeThoughts": true
       }
-    ],
-    "generationConfig": { "maxOutputTokens": 512 }
+    }
   }'
 ```
 
-#### 响应示例（节选）
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{
+      parts: [{ text: 'Solve: 3x^2 + 5x - 2 = 0' }]
+    }],
+    generationConfig: {
+      thinkingConfig: {
+        thinkingBudget: 2048,
+        includeThoughts: true
+      }
+    }
+  })
+});
+
+const data = await response.json();
+const parts = data.candidates[0].content.parts;
+
+// 分离推理和答案
+parts.forEach(part => {
+  if (part.thought === true) {
+    console.log('💭 Thinking:', part.text);
+  } else {
+    console.log('📝 Answer:', part.text);
+  }
+});
+```
+
+###⚠️ `thoughtSignature` 的实际位置（重要！）
+
+根据实际API响应，`thoughtSignature`的位置**比文档描述的更灵活**：
+
+#### 实际响应示例（来自Pro模型真实日志）
+
 ```json
 {
-  "candidates": [
-    {
-      "content": { "parts": [{ "text": "1) 结论一...\n2) 结论二..." }] }
+  "candidates": [{
+    "content": {
+      "parts": [
+        {
+          "text": "我将通过 `ls -R` 命令递归列出所有文件和目录，以探索项目结构。",
+          "thoughtSignature": "Cv0BAdHtim/OJtdbQ3JJ0KpPab..."  // ← 与text在同一个part！
+        },
+        {
+          "functionCall": {
+            "name": "Bash",
+            "args": { "command": "ls -R", "description": "列出目录..." }
+          }
+          // ← 这个part没有thoughtSignature
+        }
+      ]
     }
-  ],
-  "usageMetadata": { "totalTokenCount": 1000000 }
+  }],
+  "usageMetadata": {
+    "promptTokenCount": 13533,
+    "candidatesTokenCount": 52,
+    "thoughtsTokenCount": 48  // ← 确认有思维消耗
+  }
 }
 ```
 
-### 5. 结构化输出 (Structured Output)
-- **功能描述**: 生成符合特定格式的结构化数据（JSON、XML等）
-- **文档地址**: https://ai.google.dev/gemini-api/docs/structured-output
-- **支持特性**: Schema验证、类型安全
+#### 关键发现
 
-#### 示例（JSON Schema 约束）
+1. **`thoughtSignature`可以与`text`同级**
+   - 不仅出现在`functionCall`的part中
+   - 也可以出现在包含思维文本的part中
+
+2. **该text没有`thought: true`标记**
+   - 虽然这个text是思维过程
+   - 但响应中没有显式的`thought`字段
+   - **原因**：请求中**没有设置`includeThoughts: true`**
+   - 通过`thoughtSignature`的存在可以判断这是思维part
+   - 通过`usageMetadata.thoughtsTokenCount > 0`确认
+
+**⚠️ 重要区别：`thoughtSignature` vs 思维内容**
+
+| 项目 | `thoughtSignature` | 思维内容（thought text） |
+|------|-------------------|------------------------|
+| **用途** | 维护多轮推理上下文 | 展示推理过程给用户 |
+| **返回条件** | Function calling启用时**总是返回** | `includeThoughts: true`时才返回 |
+| **Pro模型** | ✅ 总是有（thinking不可关） | ⚠️ 需要显式设置 `includeThoughts: true` |
+| **Flash模型** | ✅ thinking启用时有 | ⚠️ 需要显式设置 `includeThoughts: true` |
+| **内容形式** | Base64加密字符串 | 可读文本 + `thought: true`标记 |
+| **可见性** | 不可读（仅用于传递） | 可读文本 |
+
+**示例对比**：
+
+```javascript
+// ❌ 错误理解：没有 thought: true 就没有thinking
+// ✅ 正确理解：Pro模型总是thinking，但默认不显示内容
+
+// 场景1：includeThoughts: false（默认）
+{
+  "parts": [
+    {
+      "text": "最终答案",
+      "thoughtSignature": "Cv0BAdHt..."  // ← 签名存在，说明有thinking
+    }
+  ],
+  "usageMetadata": {
+    "thoughtsTokenCount": 48  // ← 消耗了thinking tokens
+  }
+}
+// 没有 thought: true 标记
+// 没有可读的思维文本
+// 但确实进行了thinking（通过签名和token消耗证明）
+
+// 场景2：includeThoughts: true
+{
+  "parts": [
+    {
+      "text": "让我分析...\n首先...\n然后...",
+      "thought": true,  // ← 明确标记
+      "thoughtSignature": "Cv0BAdHt..."
+    },
+    {
+      "text": "最终答案"
+    }
+  ],
+  "usageMetadata": {
+    "thoughtsTokenCount": 156
+  }
+}
+// 有 thought: true 标记
+// 有可读的思维文本
+// 有签名
+```
+
+3. **`thoughtSignature`的多种出现模式**：
+
+**模式1：与思维文本同级**（最常见）
+```json
+{
+  "text": "让我思考一下...",
+  "thoughtSignature": "Abc123..."
+}
+```
+→ **签名与正文文本一起返回**
+
+**模式2：与functionCall同级**
+```json
+{
+  "functionCall": {...},
+  "thoughtSignature": "Xyz789..."
+}
+```
+→ **签名与工具调用一起返回**
+
+**模式3：与普通文本同级（无thought标记）**
+```json
+{
+  "text": "我将通过 ls -R 命令...",
+  "thoughtSignature": "Cv0BA..."
+}
+```
+→ **签名与普通文本一起返回**（见req_mgtc6n9mesgsjue92a8日志）
+→ 没有`thought: true`标记，但有签名和`thoughtsTokenCount`
+
+**关键规则**：
+- `thoughtSignature`**总是附加在某个part上**
+- **与该part的内容同时返回**（text或functionCall）
+- **标记推理过程结束**
+- 在流式响应中，出现在最后一个thinking相关的part上
+
+#### 处理建议
+
+```javascript
+// 正确的处理方式：检查每个part是否有thoughtSignature
+function processResponse(response) {
+  const parts = response.candidates[0].content.parts;
+  const signatures = [];
+
+  parts.forEach((part, index) => {
+    // 检查是否有思维签名
+    if (part.thoughtSignature) {
+      signatures.push(part.thoughtSignature);
+      console.log(`Part ${index} has signature (type: ${part.text ? 'text' : 'functionCall'})`);
+    }
+
+    // 根据thought字段或thoughtSignature存在性判断是否为思维
+    const isThinking = part.thought === true || part.thoughtSignature;
+
+    if (isThinking && part.text) {
+      console.log('💭 Thinking:', part.text);
+    } else if (part.text) {
+      console.log('📝 Answer:', part.text);
+    } else if (part.functionCall) {
+      console.log('🔧 Tool Call:', part.functionCall.name);
+    }
+  });
+
+  return signatures;
+}
+```
+
+#### 判断思维过程的标准
+
+1. ✅ **优先级1**：`part.thought === true` → 明确的思维标记
+2. ✅ **优先级2**：`part.thoughtSignature`存在 → 该part是思维的一部分
+3. ✅ **优先级3**：`usageMetadata.thoughtsTokenCount > 0` → 响应包含思维
+
+#### 多轮对话中的处理
+
+```javascript
+// 保留完整的part结构，包括thoughtSignature
+const conversationHistory = [];
+
+// 添加模型响应到历史
+conversationHistory.push({
+  role: 'model',
+  parts: response.candidates[0].content.parts  // ← 完整保留，包括所有thoughtSignature
+});
+
+// 下一轮请求
+const nextResponse = await fetch(url, {
+  method: 'POST',
+  body: JSON.stringify({
+    tools: [...],
+    contents: conversationHistory,  // ← thoughtSignature会自动传递
+    generationConfig: {...}
+  })
+});
+```
+
+### 流式Thinking响应（重要！）
+
+当启用thinking且使用流式输出时，响应结构与非流式有显著差异：
+
+#### 流式Thinking的特殊行为
+
+**关键发现**（基于真实日志）：
+
+1. **思维过程分块流式输出**
+   - 每个流式块包含一段思维文本
+   - 每块都有`thought: true`标记
+   - `thoughtsTokenCount`**逐块递增**
+
+2. **`thoughtSignature`出现时机**
+   - ❌ **不在前期的thinking块中**
+   - ✅ **只在最后一个thinking文本块出现**
+   - ⚠️ **`thoughtSignature`的出现 = 推理过程结束**
+   - 📌 **签名与内容同时返回**：签名附加在text或functionCall所在的part上
+   - 这是判断thinking完成的**可靠信号**
+
+3. **完整的流式响应示例**
+
+```json
+{
+  "body": [
+    // 第1块：thinking开始
+    {
+      "timestamp": 1760614914697,
+      "data": {
+        "candidates": [{
+          "content": {
+            "parts": [{
+              "text": "**Deeply Considering Optimization**\n\nI'm currently focused...",
+              "thought": true  // ← 有标记
+              // ← 无thoughtSignature
+            }]
+          }
+        }],
+        "usageMetadata": {
+          "thoughtsTokenCount": 68  // ← 初始值
+        }
+      }
+    },
+
+    // 第2块：thinking继续
+    {
+      "timestamp": 1760614916930,
+      "data": {
+        "candidates": [{
+          "content": {
+            "parts": [{
+              "text": "**Initiating Code Exploration**\n\nI'm now fully immersed...",
+              "thought": true
+              // ← 仍无thoughtSignature
+            }]
+          }
+        }],
+        "usageMetadata": {
+          "thoughtsTokenCount": 321  // ← 递增！
+        }
+      }
+    },
+
+    // ...更多thinking块（省略）...
+
+    // 第8块：thinking结束，签名出现！
+    {
+      "timestamp": 1760614928118,
+      "data": {
+        "candidates": [{
+          "content": {
+            "parts": [{
+              "text": "好的，我将开始分析您当前的项目...",
+              "thoughtSignature": "CiUB0e2Kb2htW3SDOXTCLy4..."  // ← 首次出现！
+            }]
+          }
+        }],
+        "usageMetadata": {
+          "thoughtsTokenCount": 1408  // ← 最终值
+        }
+      }
+    },
+
+    // 第9块：开始输出答案
+    {
+      "timestamp": 1760614928120,
+      "data": {
+        "candidates": [{
+          "content": {
+            "parts": [{
+              "text": "创建一个任务列表来指导整个分析和报告过程。"
+              // ← 无thought标记，无签名
+            }]
+          }
+        }],
+        "usageMetadata": {
+          "thoughtsTokenCount": 1408  // ← 保持不变
+        }
+      }
+    },
+
+    // 第10块：工具调用
+    {
+      "timestamp": 1760614928878,
+      "data": {
+        "candidates": [{
+          "content": {
+            "parts": [{
+              "functionCall": {
+                "name": "TodoWrite",
+                "args": {...}
+              }
+              // ← 无thoughtSignature
+            }]
+          }
+        }],
+        "usageMetadata": {
+          "thoughtsTokenCount": 1408
+        }
+      }
+    }
+  ]
+}
+```
+
+#### 流式Thinking处理建议
+
+```javascript
+// 处理流式thinking响应
+async function handleStreamingThinking(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  let thinkingContent = '';
+  let answerContent = '';
+  let thoughtSignature = null;
+  let isThinkingPhase = true;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value);
+    const data = JSON.parse(chunk);
+
+    const parts = data.candidates[0].content.parts;
+
+    parts.forEach(part => {
+      if (part.thought === true) {
+        // 这是thinking内容
+        console.log('💭 Thinking:', part.text);
+        thinkingContent += part.text + '\n';
+
+        // 检查签名（只在最后一块出现）
+        if (part.thoughtSignature) {
+          thoughtSignature = part.thoughtSignature;
+          console.log('✅ Got thought signature - Thinking phase completed!');
+          isThinkingPhase = false;  // ← 推理结束的信号！
+        }
+      } else if (part.text) {
+        // 这是答案内容
+        console.log('📝 Answer:', part.text);
+        answerContent += part.text;
+      } else if (part.functionCall) {
+        // 工具调用
+        console.log('🔧 Tool Call:', part.functionCall.name);
+      }
+    });
+
+    // 监控thinking token增长
+    const thinkingTokens = data.usageMetadata.thoughtsTokenCount;
+    console.log(`Thinking tokens: ${thinkingTokens}`);
+  }
+
+  return {
+    thinking: thinkingContent,
+    answer: answerContent,
+    signature: thoughtSignature  // 用于下一轮对话
+  };
+}
+```
+
+#### 关键要点
+
+| 特性 | 流式Thinking | 非流式Thinking |
+|------|-------------|---------------|
+| **thinking输出** | 分块增量输出 | 一次性输出 |
+| **thought标记** | 每个thinking块都有 | 整个thinking part有 |
+| **thoughtSignature** | 只在**最后一块**出现 | 在thinking part出现 |
+| **签名的含义** | **推理结束信号** | **推理结束信号** |
+| **thoughtsTokenCount** | **逐块递增** | 固定值 |
+| **签名位置** | 最后的thinking文本块 | thinking part或functionCall part |
+
+**🔑 核心规则**：`thoughtSignature`的出现 = 推理过程完全结束
+
+- ✅ 可以作为状态切换的触发器
+- ✅ 之后的内容是答案或工具调用
+- ✅ `thoughtsTokenCount`不再增长
+- ✅ 可以安全地保存签名用于下一轮对话
+
+**实用示例：基于签名的状态管理**
+
+```javascript
+class ThinkingStreamProcessor {
+  constructor() {
+    this.state = 'THINKING';  // THINKING -> ANSWERING -> TOOL_CALLING
+    this.thinkingContent = '';
+    this.answerContent = '';
+    this.thoughtSignature = null;
+  }
+
+  processChunk(data) {
+    const parts = data.candidates[0].content.parts;
+
+    parts.forEach(part => {
+      // 检测推理结束信号
+      if (part.thoughtSignature && this.state === 'THINKING') {
+        this.thoughtSignature = part.thoughtSignature;
+        this.state = 'ANSWERING';  // ← 状态切换！
+        console.log('🎯 State: THINKING → ANSWERING');
+        this.onThinkingComplete(this.thinkingContent, this.thoughtSignature);
+      }
+
+      // 根据当前状态处理内容
+      if (this.state === 'THINKING' && part.thought === true) {
+        this.thinkingContent += part.text;
+        this.onThinkingChunk(part.text);
+      } else if (this.state === 'ANSWERING' && part.text) {
+        this.answerContent += part.text;
+        this.onAnswerChunk(part.text);
+      } else if (part.functionCall) {
+        this.state = 'TOOL_CALLING';
+        console.log('🎯 State: ANSWERING → TOOL_CALLING');
+        this.onToolCall(part.functionCall);
+      }
+    });
+  }
+
+  // 回调函数（由用户实现）
+  onThinkingChunk(text) {
+    console.log('💭', text);
+  }
+
+  onThinkingComplete(fullThinking, signature) {
+    console.log('✅ Thinking completed');
+    console.log('📝 Full thinking:', fullThinking);
+    console.log('🔐 Signature:', signature.substring(0, 20) + '...');
+  }
+
+  onAnswerChunk(text) {
+    console.log('📝', text);
+  }
+
+  onToolCall(functionCall) {
+    console.log('🔧 Tool:', functionCall.name);
+  }
+}
+
+// 使用示例
+const processor = new ThinkingStreamProcessor();
+
+// 处理流式响应
+for await (const chunk of streamResponse) {
+  processor.processChunk(chunk);
+}
+
+// 访问最终结果和签名
+const signature = processor.thoughtSignature;  // 用于下一轮对话
+```
+
+#### 流式vs非流式对比
+
+**非流式**：
+```json
+{
+  "parts": [
+    {
+      "text": "完整的思维过程...",
+      "thought": true,
+      "thoughtSignature": "..."
+    },
+    {
+      "text": "最终答案"
+    }
+  ]
+}
+```
+
+**流式**：
+```json
+// 多个响应块
+[
+  { "parts": [{ "text": "思维片段1", "thought": true }] },
+  { "parts": [{ "text": "思维片段2", "thought": true }] },
+  { "parts": [{ "text": "思维片段N", "thoughtSignature": "..." }] },  // ← 最后一块
+  { "parts": [{ "text": "答案" }] }
+]
+```
+
+### 禁用思维（仅 Flash 支持）
+
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
   -d '{
-    "contents": [
-      { "role": "user", "parts": [{ "text": "从下面文本中提取人名、公司名：张三入职字节跳动成为算法工程师。" }] }
-    ],
+    "contents": [{
+      "parts": [{ "text": "How does AI work?" }]
+    }],
+    "generationConfig": {
+      "thinkingConfig": {
+        "thinkingBudget": 0
+      }
+    }
+  }'
+```
+
+```javascript
+// Flash 模型可以关闭 thinking 以降低成本
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{ parts: [{ text: 'How does AI work?' }] }],
+    generationConfig: {
+      thinkingConfig: { thinkingBudget: 0 }  // 关闭 thinking
+    }
+  })
+});
+```
+
+---
+
+## 多模态理解
+
+### 图像理解
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "contents": [{
+      "parts": [
+        { "inlineData": { "mimeType": "image/jpeg", "data": "/9j/4AAQSkZJRg..." } },
+        { "text": "What objects are in this image?" }
+      ]
+    }]
+  }'
+```
+
+```javascript
+const imageBase64 = '/9j/4AAQSkZJRg...';  // Base64 编码的图像数据
+
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{
+      parts: [
+        { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
+        { text: 'What objects are in this image?' }
+      ]
+    }]
+  })
+});
+```
+
+### 结构化输出
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "contents": [{
+      "role": "user",
+      "parts": [{ "text": "提取人名和公司名：张三入职字节跳动成为算法工程师。" }]
+    }],
     "generationConfig": {
       "responseMimeType": "application/json",
       "responseSchema": {
@@ -204,238 +781,43 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
   }'
 ```
 
-#### 响应示例
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [{
-          "text": "{\n  \"persons\": [\"张三\"],\n  \"companies\": [\"字节跳动\"]\n}"
-        }]
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{
+      role: 'user',
+      parts: [{ text: '提取人名和公司名：张三入职字节跳动成为算法工程师。' }]
+    }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          persons: { type: 'array', items: { type: 'string' } },
+          companies: { type: 'array', items: { type: 'string' } }
+        },
+        required: ['persons', 'companies']
       }
     }
-  ]
-}
+  })
+});
+
+const result = await response.json();
+const data = JSON.parse(result.candidates[0].content.parts[0].text);
+console.log(data);  // { persons: ["张三"], companies: ["字节跳动"] }
 ```
 
-### 6. 思考功能 (Thinking)
-- **功能描述**: 在生成内容时进行深度推理和思考，提升复杂任务处理能力
-- **文档地址**: https://ai.google.dev/gemini-api/docs/thinking
-- **支持特性**: 推理过程可视化、思考预算控制
+---
 
-#### 示例（控制 Thinking 预算，来自官方文档思路）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [
-      {
-        "parts": [
-          { "text": "How does AI work?" }
-        ]
-      }
-    ],
-    "generationConfig": {
-      "thinkingConfig": {
-        "thinkingBudget": 0   // 将思考预算设为0可禁用thinking（2.5默认开启）
-      }
-    }
-  }'
-```
+## 函数调用 (Function Calling)
 
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          { "text": "最终答案：..." },
-          { "thought": { "content": "推理步骤1...步骤2...", "redacted": true } }
-        ]
-      }
-    }
-  ]
-}
-```
+### 基础工具调用
 
-## 多模态理解能力
-
-### 7. 文档理解 (Document Understanding)
-- **功能描述**: 解析和理解各种格式的文档内容，提取关键信息
-- **文档地址**: https://ai.google.dev/gemini-api/docs/document-processing
-- **支持格式**: PDF、Word、PPT、HTML、Markdown等
-
-#### 示例（Files API + 文档QA）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/files:upload?key=$GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "file": {
-      "displayName": "annual_report.pdf",
-      "mimeType": "application/pdf",
-      "data": "JVBERi0xLjQKJcfs..."
-    }
-  }'
-```
-
-上传成功后根据返回的 `file.uri`：
-
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{
-      "role": "user",
-      "parts": [
-        { "fileData": { "fileUri": "uploaded-files/annual_report.pdf", "mimeType": "application/pdf" } },
-        { "text": "请给出报告的三条关键要点" }
-      ]
-    }]
-  }'
-```
-
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    {
-      "content": { "parts": [{ "text": "1) 收入同比增长...\n2) 毛利率提升...\n3) 现金流改善..." }] }
-    }
-  ]
-}
-```
-
-### 8. 图像理解 (Image Understanding)
-- **功能描述**: 分析和理解图像内容，提取相关信息
-- **文档地址**: https://ai.google.dev/gemini-api/docs/image-understanding
-- **支持特性**: 物体识别、场景分析、OCR文字提取
-
-#### 示例（图像+文本多模态）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{
-      "role": "user",
-      "parts": [
-        { "inlineData": { "mimeType": "image/jpeg", "data": "/9j/4AAQSkZJRgABAQAAAQABAAD..." } },
-        { "text": "这张图里有哪些物体？给出中文列表。" }
-      ]
-    }]
-  }'
-```
-
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    { "content": { "parts": [{ "text": "- 人\n- 自行车\n- 红绿灯\n- 建筑" }] } }
-  ]
-}
-```
-
-### 9. 视频理解 (Video Understanding)
-- **功能描述**: 处理和理解视频内容，提取有用信息
-- **文档地址**: https://ai.google.dev/gemini-api/docs/video-understanding
-- **支持特性**: 视频摘要、动作识别、场景分析
-
-#### 示例（视频片段摘要）
-```bash
-# 1) 通过可恢复上传接口上传视频（>20MB 建议使用）
-VIDEO_PATH="path/to/sample.mp4"
-MIME_TYPE=$(file -b --mime-type "${VIDEO_PATH}")
-NUM_BYTES=$(wc -c < "${VIDEO_PATH}")
-DISPLAY_NAME=VIDEO
-
-tmp_header_file=upload-header.tmp
-
-curl "https://generativelanguage.googleapis.com/upload/v1beta/files" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -D ${tmp_header_file} \
-  -H "X-Goog-Upload-Protocol: resumable" \
-  -H "X-Goog-Upload-Command: start" \
-  -H "X-Goog-Upload-Header-Content-Length: ${NUM_BYTES}" \
-  -H "X-Goog-Upload-Header-Content-Type: ${MIME_TYPE}" \
-  -H "Content-Type: application/json" \
-  -d "{'file': {'display_name': '${DISPLAY_NAME}'}}" 2> /dev/null
-
-upload_url=$(grep -i "x-goog-upload-url: " "${tmp_header_file}" | cut -d" " -f2 | tr -d "\r")
-rm "${tmp_header_file}"
-
-curl "${upload_url}" \
-  -H "Content-Length: ${NUM_BYTES}" \
-  -H "X-Goog-Upload-Offset: 0" \
-  -H "X-Goog-Upload-Command: upload, finalize" \
-  --data-binary "@${VIDEO_PATH}" 2> /dev/null > file_info.json
-
-file_uri=$(jq -r ".file.uri" file_info.json)
-
-# 2) 使用上传后的 file_uri 进行视频理解
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-    -H "x-goog-api-key: $GEMINI_API_KEY" \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    -d '{
-      "contents": [{
-        "parts":[
-          {"file_data":{"mime_type": "'"${MIME_TYPE}"'", "file_uri": "'"${file_uri}"'"}},
-          {"text": "Summarize this video in 50 Chinese characters."}]
-        }]
-      }' 2> /dev/null | jq -r ".candidates[].content.parts[].text"
-```
-
-#### 响应示例（节选）
-```json
-{ "candidates": [{ "content": { "parts": [{ "text": "视频展示了新品功能与核心卖点..." }] } }] }
-```
-
-### 10. 音频理解 (Audio Understanding)
-- **功能描述**: 解析和理解音频内容，提取关键信息
-- **文档地址**: https://ai.google.dev/gemini-api/docs/audio
-- **支持特性**: 语音识别、情感分析、音乐理解
-
-#### 示例（语音转写 + 情感）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{
-      "parts": [
-        { "inlineData": { "mimeType": "audio/wav", "data": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA..." } },
-        { "text": "请将音频转写为文字，并输出说话者情绪（中文）。" }
-      ]
-    }]
-  }'
-```
-
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    { "content": { "parts": [{ "text": "转写：...\n情绪：积极/中性/消极" }] } }
-  ]
-}
-```
-
-## 工具与集成
-
-### 11. 函数调用 (Function Calling)
-- **功能描述**: 在生成内容过程中调用外部函数或工具
-- **文档地址**: https://ai.google.dev/gemini-api/docs/function-calling
-- **支持特性**: 工具声明、参数验证、结果处理
-
-#### 示例（工具声明 + 调用）
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
@@ -457,209 +839,125 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
   }'
 ```
 
-模型可能返回要求调用 `get_weather` 的内容（节选）：
-
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          { "functionCall": { "name": "get_weather", "args": { "city": "上海" } } }
-        ]
-      }
+```javascript
+// 第一轮：模型请求调用工具
+const tools = [{
+  functionDeclarations: [{
+    name: 'get_weather',
+    description: '查询城市天气',
+    parameters: {
+      type: 'object',
+      properties: { city: { type: 'string' } },
+      required: ['city']
     }
-  ]
-}
+  }]
+}];
+
+let response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    tools: tools,
+    contents: [{ parts: [{ text: '帮我查下上海的天气' }] }]
+  })
+});
+
+let data = await response.json();
+const functionCall = data.candidates[0].content.parts[0].functionCall;
+console.log('Tool Call:', functionCall);
+// { name: "get_weather", args: { city: "上海" } }
+
+// 执行工具并返回结果
+const weatherResult = { temp: 28, condition: '多云' };
+
+// 第二轮：回传工具结果
+response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    tools: tools,
+    contents: [
+      { parts: [{ text: '帮我查下上海的天气' }] },
+      { role: 'model', parts: [{ functionCall: functionCall }] },
+      { role: 'function', parts: [{ functionResponse: { name: 'get_weather', response: weatherResult } }] }
+    ]
+  })
+});
+
+data = await response.json();
+console.log(data.candidates[0].content.parts[0].text);
+// "上海当前天气为多云，温度28°C。"
 ```
 
-随后将外部函数结果回传：
+### 并行函数调用
 
-```json
-POST ...:generateContent
-{
-  "tools": [{ "functionDeclarations": [...] }],
-  "contents": [
-    { "parts": [{ "text": "帮我查下上海的天气" }] },
-    { "role": "tool", "parts": [{ "functionResponse": { "name": "get_weather", "response": { "temp": 28, "condition": "多云" } } }] }
-  ]
-}
-```
-
-### 12. Google搜索集成 (Google Search)
-- **功能描述**: 在生成内容时集成Google搜索结果，提供实时信息
-- **文档地址**: https://ai.google.dev/gemini-api/docs/google-search
-- **支持特性**: 实时搜索、结果验证、引用来源
-
-#### 示例（启用Google检索增强）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "tools": [ { "googleSearch": { "enableAttribution": true } } ],
-    "contents": [ { "parts": [{ "text": "最新的Llama模型版本与发布时间？请附引用。" }] } ]
-  }'
-```
-
-#### 响应示例（节选，含引用）
-```json
-{
-  "candidates": [
-    {
-      "groundingAttributions": [
-        { "source": { "uri": "https://ai.meta.com/...", "title": "Meta AI Blog" } }
-      ],
-      "content": { "parts": [{ "text": "Llama X 发布于... (参考: Meta AI Blog)" }] }
-    }
-  ]
-}
-```
-
-### 13. 代码执行 (Code Execution)
-- **功能描述**: 在生成内容过程中执行代码片段，获取实时结果
-- **文档地址**: https://ai.google.dev/gemini-api/docs/code-execution
-- **支持语言**: Python、JavaScript、SQL等
-
-#### 示例（内置沙箱执行）
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
   -d '{
-    "tools": [ { "codeExecution": { "languages": ["python"] } } ],
-    "contents": [ { "parts": [{ "text": "执行Python：计算前100个质数之和，并返回结果。" }] } ]
-  }'
-```
-
-#### 响应示例（节选）
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          { "executableCode": { "language": "python", "code": "..." } },
-          { "executionResult": { "output": "24133", "stderr": "" } }
-        ]
-      }
-    }
-  ]
-}
-```
-
-### 14. URL上下文 (URL Context)
-- **功能描述**: 使用特定URL的内容作为上下文，生成相关输出
-- **文档地址**: https://ai.google.dev/gemini-api/docs/url-context
-- **支持特性**: 网页内容提取、链接分析
-
-#### 示例（直接引用URL）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [
-      {
-        "parts": [
-          { "text": "阅读以下URL并总结要点：" },
-          { "url": { "uri": "https://ai.google.dev/gemini-api/docs/text-generation" } }
-        ]
-      }
-    ]
-  }'
-```
-
-#### 响应示例（节选）
-```json
-{ "candidates": [{ "content": { "parts": [{ "text": "页面介绍了文本生成的请求格式、示例与配额..." }] } }] }
-```
-
-## 高级功能
-
-### 15. 批处理模式 (Batch Mode)
-- **功能描述**: 批量处理大量请求，提高效率
-- **文档地址**: https://ai.google.dev/gemini-api/docs/batch-mode
-- **支持特性**: 异步处理、成本优化
-
-#### 示例（REST/cURL，Inline 请求方式）
-```bash
-curl https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent \
--H "x-goog-api-key: $GEMINI_API_KEY" \
--X POST \
--H "Content-Type:application/json" \
--d '{
-    "batch": {
-        "display_name": "my-batch-requests",
-        "input_config": {
-            "requests": {
-                "requests": [
-                    {
-                        "request": {"contents": [{"parts": [{"text": "Describe the process of photosynthesis."}]}]},
-                        "metadata": {"key": "request-1"}
-                    },
-                    {
-                        "request": {"contents": [{"parts": [{"text": "Why is the sky blue?"}]}]},
-                        "metadata": {"key": "request-2"}
-                    }
-                ]
-            }
+    "tools": [{
+      "functionDeclarations": [
+        {
+          "name": "get_weather",
+          "description": "查询城市天气",
+          "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+        },
+        {
+          "name": "get_exchange_rate",
+          "description": "查询汇率",
+          "parameters": { "type": "object", "properties": { "from": { "type": "string" }, "to": { "type": "string" } } }
         }
-    }
-}'
-```
-
-#### 轮询作业状态与获取结果
-```bash
-BATCH_NAME="batches/123456" # 替换为创建返回的名称
-
-curl https://generativelanguage.googleapis.com/v1beta/$BATCH_NAME \
--H "x-goog-api-key: $GEMINI_API_KEY" \
--H "Content-Type:application/json" 2> /dev/null > batch_status.json
-
-batch_state=$(jq -r '.metadata.state' batch_status.json)
-if [[ $batch_state = "JOB_STATE_SUCCEEDED" ]]; then
-  if [[ $(jq '.response | has("inlinedResponses")' batch_status.json) = "true" ]]; then
-    jq -r '.response.inlinedResponses' batch_status.json
-  else
-    responses_file_name=$(jq -r '.response.responsesFile' batch_status.json)
-    curl https://generativelanguage.googleapis.com/download/v1beta/$responses_file_name:download?alt=media \
-      -H "x-goog-api-key: $GEMINI_API_KEY" 2> /dev/null
-  fi
-fi
-```
-
-#### 取消与删除
-```bash
-# 取消
-curl https://generativelanguage.googleapis.com/v1beta/$BATCH_NAME:cancel \
-  -H "x-goog-api-key: $GEMINI_API_KEY"
-
-# 删除
-curl https://generativelanguage.googleapis.com/v1beta/$BATCH_NAME:delete \
-  -H "x-goog-api-key: $GEMINI_API_KEY"
-```
-
-### 16. 上下文缓存 (Context Caching)
-- **功能描述**: 缓存重复的上下文内容，减少token消耗
-- **文档地址**: https://ai.google.dev/gemini-api/docs/caching
-- **支持特性**: 智能缓存、成本节省
-
-#### 示例（创建缓存 + 复用）
-```bash
-curl "https://generativelanguage.googleapis.com/v1beta/cachedContents?key=$GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{ "parts": [{ "text": "[固定上下文内容，较长文本]" }] }],
-    "ttlSeconds": 86400
+      ]
+    }],
+    "contents": [{ "parts": [{ "text": "上海天气如何？美元兑人民币汇率是多少？" }] }]
   }'
 ```
 
-生成内容时复用：
+```javascript
+const tools = [{
+  functionDeclarations: [
+    { name: 'get_weather', description: '查询城市天气', parameters: { /* ... */ } },
+    { name: 'get_exchange_rate', description: '查询汇率', parameters: { /* ... */ } }
+  ]
+}];
+
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    tools: tools,
+    contents: [{ parts: [{ text: '上海天气如何？美元兑人民币汇率是多少？' }] }]
+  })
+});
+
+const data = await response.json();
+const functionCalls = data.candidates[0].content.parts
+  .filter(p => p.functionCall)
+  .map(p => p.functionCall);
+
+console.log('Parallel calls:', functionCalls);
+// [
+//   { name: "get_weather", args: { city: "上海" } },
+//   { name: "get_exchange_rate", args: { from: "USD", to: "CNY" } }
+// ]
+```
+
+---
+
+## Google 搜索集成
+
+### 基础搜索
 
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
@@ -667,43 +965,35 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
   -H 'Content-Type: application/json' \
   -X POST \
   -d '{
-    "cachedContent": { "cacheId": "cachedContents/abc123" },
-    "contents": [{ "parts": [{ "text": "基于缓存上下文回答：..." }] }]
+    "tools": [{ "googleSearch": {} }],
+    "contents": [{ "parts": [{ "text": "Who won Euro 2024?" }] }]
   }'
 ```
 
-### 17. 文件API (Files API)
-- **功能描述**: 上传和管理文件，支持多种格式
-- **文档地址**: https://ai.google.dev/gemini-api/docs/files
-- **支持格式**: 图片、文档、音频、视频
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    tools: [{ googleSearch: {} }],
+    contents: [{ parts: [{ text: 'Who won Euro 2024?' }] }]
+  })
+});
 
-#### 示例（上传与列出）
-```bash
-# 简单上传（小文件）
-curl "https://generativelanguage.googleapis.com/v1beta/files:upload?key=$GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "file": { "displayName": "image.png", "mimeType": "image/png", "data": "iVBORw0K..." }
-  }'
-
-# 列出文件
-curl "https://generativelanguage.googleapis.com/v1beta/files?key=$GEMINI_API_KEY"
+const data = await response.json();
+console.log('Answer:', data.candidates[0].content.parts[0].text);
+console.log('Sources:', data.candidates[0].groundingMetadata.groundingChunks);
 ```
 
-#### 响应示例（节选）
-```json
-{
-  "files": [ { "uri": "uploaded-files/image.png", "mimeType": "image/png" } ]
-}
-```
+---
 
-### 18. Token计数 (Token Counting)
-- **功能描述**: 精确计算输入和输出的token数量
-- **文档地址**: https://ai.google.dev/gemini-api/docs/tokens
-- **支持特性**: 实时计数、成本预估
+## 其他功能
 
-#### 示例（计数一个提示的Token）
+### Token 计数
+
 ```bash
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
@@ -714,84 +1004,109 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:c
   }'
 ```
 
-#### 响应示例
-```json
-{ "totalTokens": 23 }
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{ parts: [{ text: '简述Transformer的自注意力机制。' }] }]
+  })
+});
+
+const data = await response.json();
+console.log('Total tokens:', data.totalTokens);
 ```
 
-### 19. 提示工程 (Prompt Engineering)
-- **功能描述**: 优化提示词设计，提升模型性能
-- **文档地址**: https://ai.google.dev/gemini-api/docs/prompting-strategies
-- **支持特性**: 最佳实践、示例模板
+### 批处理模式
 
-#### 示例（少样本提示）
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
   -d '{
-    "contents": [
-      { "parts": [{ "text": "将句子按情感分类：\n例1：我今天超开心 → 积极\n例2：这事让我很烦 → 消极\n现在请分类：这还行吧。" }] }
-    ],
-    "generationConfig": { "temperature": 0.2 }
+    "batch": {
+      "display_name": "my-batch",
+      "input_config": {
+        "requests": {
+          "requests": [
+            {
+              "request": { "contents": [{ "parts": [{ "text": "Describe photosynthesis." }] }] },
+              "metadata": { "key": "request-1" }
+            },
+            {
+              "request": { "contents": [{ "parts": [{ "text": "Why is the sky blue?" }] }] },
+              "metadata": { "key": "request-2" }
+            }
+          ]
+        }
+      }
+    }
   }'
 ```
 
-#### 响应示例（节选）
-```json
-{ "candidates": [{ "content": { "parts": [{ "text": "中性" }] } }] }
+```javascript
+const batchResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    batch: {
+      display_name: 'my-batch',
+      input_config: {
+        requests: {
+          requests: [
+            {
+              request: { contents: [{ parts: [{ text: 'Describe photosynthesis.' }] }] },
+              metadata: { key: 'request-1' }
+            },
+            {
+              request: { contents: [{ parts: [{ text: 'Why is the sky blue?' }] }] },
+              metadata: { key: 'request-2' }
+            }
+          ]
+        }
+      }
+    }
+  })
+});
+
+const batchData = await batchResponse.json();
+const batchName = batchData.name;  // batches/123456
+
+// 轮询作业状态
+const statusResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/${batchName}`, {
+  headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY }
+});
+
+const statusData = await statusResponse.json();
+console.log('Batch state:', statusData.metadata.state);
 ```
-
-
-## 模型系列
-
-### Gemini 2.5 系列
-- **Gemini 2.5 Pro**: 最高性能，支持复杂推理和长上下文
-  - 输入: 音频、图像、视频、文本、PDF  
-  - 输出: 文本
-- **Gemini 2.5 Flash**: 平衡性能和速度，适合大多数应用
-  - 输入: 音频、图像、视频、文本  
-  - 输出: 文本
-- **Gemini 2.5 Flash-Lite**: 轻量级版本，快速响应
-  - 输入: 文本、图像、视频、音频  
-  - 输出: 文本
-
-### Gemini 2.0 系列
-- **Gemini 2.0 Flash**: 新一代快速模型
-  - 输入: 音频、图像、视频、文本  
-  - 输出: 文本
-- **Gemini 2.0 Flash-Lite**: 超轻量级版本
-  - 输入: 音频、图像、视频、文本  
-  - 输出: 文本
-
-## 速率限制参考
-
-### 免费层限制（每个API密钥）
-| 模型 | RPM | TPM | RPD |
-|------|-----|-----|-----|
-| Gemini 2.5 Pro | 5 | 250,000 | 100 |
-| Gemini 2.5 Flash | 10 | 250,000 | 250 |
-| Gemini 2.5 Flash-Lite | 15 | 250,000 | 1,000 |
-| Gemini 2.0 Flash | 15 | 1,000,000 | 200 |
-| Gemini 2.0 Flash-Lite | 30 | 1,000,000 | 200 |
-
-**说明**:
-- RPM: 每分钟请求数 (Requests Per Minute)
-- TPM: 每分钟Token数 (Tokens Per Minute)  
-- RPD: 每天请求数 (Requests Per Day)
-- *: 无限制
-
-## 使用建议
-
-1. **多API密钥策略**: 使用多个API密钥可以有效提升总体请求限制
-2. **模型选择**: 根据任务复杂度选择合适的模型
-3. **成本优化**: 利用上下文缓存和批处理模式降低成本
-4. **安全配置**: 根据应用场景配置适当的安全设置
-5. **错误处理**: 实现完善的错误处理和重试机制
 
 ---
 
-**注意**: 以上功能列表基于官方文档整理，部分功能可能仍在开发中或需要特定权限。建议访问官方文档获取最新信息和详细使用说明。
+## 完整功能列表
+
+本文档仅展示常用功能的示例。Gemini API 还支持以下功能：
+
+- **图像生成**: 根据文本提示生成图像
+- **语音生成**: 文本转语音 (TTS)
+- **长上下文处理**: 百万级 token 处理
+- **文档理解**: PDF、Word、PPT 等文档解析
+- **视频理解**: 视频摘要和场景分析
+- **音频理解**: 语音识别和情感分析
+- **代码执行**: 沙箱中执行代码
+- **上下文缓存**: 减少 token 消耗
+
+详细说明和原理请参考：
+- 项目主文档: [README.md](../README.md)
+- 官方文档: https://ai.google.dev/gemini-api/docs
+
+---
 
 **最后更新**: 2025年1月
