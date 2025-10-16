@@ -1,27 +1,35 @@
 /**
- * Gemini API Type Definitions
- * Based on official Gemini API documentation
+ * Gemini API 类型定义
+ * 基于 Google Gemini API 官方文档
  */
 
-// ============= Request Types =============
+/**
+ * Gemini 消息角色
+ */
+export type GeminiRole = 'user' | 'model' | 'system' | 'tool';
 
-export interface GeminiContent {
-  role?: 'user' | 'model';
-  parts: GeminiPart[];
-}
-
-export type GeminiPart =
-  | GeminiTextPart
-  | GeminiInlineDataPart
-  | GeminiFileDataPart
-  | GeminiFunctionCallPart
-  | GeminiFunctionResponsePart
-  | GeminiThoughtPart;
-
+/**
+ * Gemini 文本部分
+ * 基于官方文档：支持thinking标记
+ */
 export interface GeminiTextPart {
   text: string;
+  /** Gemini 2.5 thinking 标记
+   * 官方文档：用于标识思考内容部分
+   * 不要将带有thought: true的部分连接在一起
+   */
+  thought?: boolean;
+  /** Gemini 2.5 thinking 签名
+   * 官方文档：用于在多轮对话中维护推理上下文
+   * 必须原样保留并在后续请求中传回
+   * 仅在启用 thinking 和 function calling 时返回
+   */
+  thoughtSignature?: string;
 }
 
+/**
+ * Gemini 内联数据部分（图像、文档等）
+ */
 export interface GeminiInlineDataPart {
   inlineData: {
     mimeType: string;
@@ -29,20 +37,24 @@ export interface GeminiInlineDataPart {
   };
 }
 
-export interface GeminiFileDataPart {
-  fileData: {
-    mimeType: string;
-    fileUri: string;
-  };
-}
-
+/**
+ * Gemini 函数调用部分
+ */
 export interface GeminiFunctionCallPart {
   functionCall: {
     name: string;
     args: Record<string, any>;
   };
+  /** Gemini 2.5 thinking 签名
+   * 官方文档：用于在多轮对话中维护推理上下文
+   * 可以与 functionCall 同级出现，表示推理结束
+   */
+  thoughtSignature?: string;
 }
 
+/**
+ * Gemini 函数响应部分
+ */
 export interface GeminiFunctionResponsePart {
   functionResponse: {
     name: string;
@@ -50,151 +62,226 @@ export interface GeminiFunctionResponsePart {
   };
 }
 
-export interface GeminiThoughtPart {
-  thought: {
-    content: string;
-    redacted?: boolean;
+/**
+ * Gemini 部分类型
+ */
+export type GeminiPart =
+  | GeminiTextPart
+  | GeminiInlineDataPart
+  | GeminiFunctionCallPart
+  | GeminiFunctionResponsePart;
+
+/**
+ * Gemini 内容
+ */
+export interface GeminiContent {
+  role: GeminiRole;
+  parts: GeminiPart[];
+}
+
+/**
+ * Gemini 生成配置
+ * 基于官方文档: https://ai.google.dev/gemini-api/docs/thinking
+ */
+export interface GeminiGenerationConfig {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  maxOutputTokens?: number;
+  stopSequences?: string[];
+  candidateCount?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  responseMimeType?: string;
+  responseSchema?: any;
+  /** Gemini 2.5 Thinking 配置
+   * 官方文档要点：
+   * - thinkingBudget: -1表示动态预算，0表示禁用
+   * - includeThoughts: 是否包含思考内容在响应中
+   */
+  thinkingConfig?: {
+    /** 思考预算：-1(动态) | 0(禁用) | 正整数(固定预算) */
+    thinkingBudget?: number;
+    /** 是否在响应中包含思考内容 */
+    includeThoughts?: boolean;
   };
-  thoughtSignature?: string;
 }
 
-export interface GeminiTool {
-  functionDeclarations: GeminiFunctionDeclaration[];
-}
-
-export interface GeminiFunctionDeclaration {
-  name: string;
-  description: string;
-  parameters: {
-    type: 'object';
-    properties: Record<string, any>;
-    required?: string[];
-  };
-}
-
-export type GeminiToolConfig =
-  | { functionCallingConfig: { mode: 'AUTO' | 'ANY' | 'NONE' } }
-  | {
-      functionCallingConfig: {
-        mode: 'ANY';
-        allowedFunctionNames: string[];
-      };
-    };
-
-export interface GeminiThinkingConfig {
-  thinkingBudget?: number;
-}
-
+/**
+ * Gemini 安全设置
+ */
 export interface GeminiSafetySettings {
   category: string;
   threshold: string;
 }
 
-export interface GeminiGenerationConfig {
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  candidateCount?: number;
-  maxOutputTokens?: number;
-  stopSequences?: string[];
-  responseMimeType?: string;
-  responseSchema?: Record<string, any>;
-  thinkingConfig?: GeminiThinkingConfig;
+/**
+ * Gemini 函数声明
+ */
+export interface GeminiFunctionDeclaration {
+  name: string;
+  description?: string;
+  parameters?: {
+    type: string;
+    properties?: Record<string, any>;
+    required?: string[];
+  };
 }
 
-export interface GeminiGenerateContentRequest {
+/**
+ * Gemini 工具
+ */
+export interface GeminiTool {
+  functionDeclarations?: GeminiFunctionDeclaration[];
+  google_search?: Record<string, any>;
+  codeExecution?: {
+    languages?: string[];
+  };
+}
+
+/**
+ * Gemini 工具配置
+ */
+export interface GeminiToolConfig {
+  functionCallingConfig?: {
+    mode?: 'AUTO' | 'ANY' | 'NONE';
+    allowedFunctionNames?: string[];
+  };
+}
+
+/**
+ * Gemini 系统指令
+ */
+export interface GeminiSystemInstruction {
+  role: 'system';
+  parts: GeminiTextPart[];
+}
+
+/**
+ * Gemini 缓存内容
+ */
+export interface GeminiCachedContent {
   contents: GeminiContent[];
-  systemInstruction?: GeminiContent;
+  ttl?: string;
+  name?: string;
+  displayName?: string;
+}
+
+/**
+ * Gemini 请求
+ */
+export interface GeminiRequest {
+  contents: GeminiContent[];
+  systemInstruction?: GeminiSystemInstruction;
   tools?: GeminiTool[];
   toolConfig?: GeminiToolConfig;
-  safetySettings?: GeminiSafetySettings[];
   generationConfig?: GeminiGenerationConfig;
+  safetySettings?: GeminiSafetySettings[];
+  cachedContent?: string;
 }
 
-// ============= Response Types =============
-
-export interface GeminiUsageMetadata {
-  promptTokenCount: number;
-  candidatesTokenCount: number;
-  totalTokenCount: number;
-  cachedContentTokenCount?: number;
-}
-
-export type GeminiFinishReason =
-  | 'STOP'
-  | 'MAX_TOKENS'
-  | 'SAFETY'
-  | 'RECITATION'
-  | 'OTHER'
-  | 'BLOCKLIST'
-  | 'PROHIBITED_CONTENT'
-  | 'SPII';
-
+/**
+ * Gemini 候选者
+ */
 export interface GeminiCandidate {
   content: GeminiContent;
-  finishReason?: GeminiFinishReason;
+  finishReason?: string;
+  finishMessage?: string;  // 添加finishMessage字段
   safetyRatings?: Array<{
     category: string;
     probability: string;
+    blocked?: boolean;
   }>;
   citationMetadata?: {
-    citationSources: Array<{
+    citations: Array<{
       startIndex?: number;
       endIndex?: number;
       uri?: string;
       license?: string;
     }>;
   };
+  tokenCount?: number;
+  index?: number;
+  logprobsResult?: any;
 }
 
-export interface GeminiGenerateContentResponse {
-  candidates: GeminiCandidate[];
-  usageMetadata?: GeminiUsageMetadata;
-  promptFeedback?: {
-    blockReason?: string;
-    safetyRatings?: Array<{
-      category: string;
-      probability: string;
-    }>;
-  };
+/**
+ * Gemini 提示反馈
+ */
+export interface GeminiPromptFeedback {
+  blockReason?: string;
+  safetyRatings?: Array<{
+    category: string;
+    probability: string;
+    blocked?: boolean;
+  }>;
 }
 
-// ============= Streaming Types =============
-
-export interface GeminiStreamChunk {
-  candidates?: GeminiCandidate[];
-  usageMetadata?: GeminiUsageMetadata;
-  promptFeedback?: {
-    blockReason?: string;
-  };
-}
-
-// ============= Token Counting Types =============
-
-export interface GeminiCountTokensRequest {
-  contents: GeminiContent[];
-  systemInstruction?: GeminiContent;
-  tools?: GeminiTool[];
-  toolConfig?: GeminiToolConfig;
-}
-
-export interface GeminiCountTokensResponse {
-  totalTokens: number;
+/**
+ * Gemini 使用元数据
+ * 包含请求的令牌使用情况统计
+ */
+export interface GeminiUsageMetadata {
+  /** 输入提示词的令牌数量 */
+  promptTokenCount?: number;
+  /** 生成候选响应的令牌数量 */
+  candidatesTokenCount?: number;
+  /** 总令牌数量 (prompt + candidates + thoughts) */
+  totalTokenCount?: number;
+  /** 从缓存中检索的内容令牌数量 */
   cachedContentTokenCount?: number;
+  /** 思维推理过程的令牌数量 (2025年新增，仅支持Gemini 2.5系列) */
+  thoughtsTokenCount?: number;
 }
 
-// ============= Error Types =============
+/**
+ * Gemini 响应
+ */
+export interface GeminiResponse {
+  candidates?: GeminiCandidate[];
+  promptFeedback?: GeminiPromptFeedback;
+  usageMetadata?: GeminiUsageMetadata;
+  modelVersion?: string;
+}
 
-export interface GeminiError {
+/**
+ * Gemini 流式响应
+ */
+export interface GeminiStreamResponse extends GeminiResponse {
+  // 流式响应与普通响应结构相同
+}
+
+/**
+ * Gemini 错误响应
+ */
+export interface GeminiErrorResponse {
   error: {
     code: number;
     message: string;
     status: string;
-    details?: Array<{
-      '@type': string;
-      reason?: string;
-      domain?: string;
-      metadata?: Record<string, string>;
-    }>;
+    details?: any[];
   };
+}
+
+/**
+ * Gemini 计数请求
+ */
+export interface GeminiCountRequest {
+  contents: GeminiContent[];
+  systemInstruction?: GeminiSystemInstruction;
+  tools?: GeminiTool[];
+  generationConfig?: {
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    maxOutputTokens?: number;
+  };
+}
+
+/**
+ * Gemini 计数响应
+ */
+export interface GeminiCountResponse {
+  totalTokens: number;
+  cachedContentTokenCount?: number;
 }

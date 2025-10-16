@@ -1,219 +1,286 @@
 /**
- * Claude API Type Definitions
- * Based on official Claude API documentation
+ * Claude API 类型定义
+ * 基于 Anthropic Claude API 官方文档
  */
 
-// ============= Request Types =============
+/**
+ * Claude 消息角色
+ */
+export type ClaudeRole = 'user' | 'assistant';
 
-export interface ClaudeMessage {
-  role: 'user' | 'assistant';
-  content: string | ClaudeContentBlock[];
+/**
+ * Claude 文本内容块
+ */
+export interface ClaudeTextContent {
+  type: 'text';
+  text: string;
 }
 
-export type ClaudeContentBlock =
-  | ClaudeTextBlock
-  | ClaudeImageBlock
-  | ClaudeToolUseBlock
-  | ClaudeToolResultBlock
-  | ClaudeThinkingBlock;
+/**
+ * Claude 图像内容块
+ */
+export interface ClaudeImageContent {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+}
 
+/**
+ * Claude 文档内容块
+ */
+export interface ClaudeDocumentContent {
+  type: 'document';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+  cache_control?: {
+    type: 'ephemeral';
+  };
+}
+
+/**
+ * Claude 消息内容
+ */
+export type ClaudeContent = ClaudeTextContent | ClaudeImageContent | ClaudeDocumentContent;
+
+/**
+ * Claude 消息
+ */
+export interface ClaudeMessage {
+  role: ClaudeRole;
+  content: string | ClaudeContent[];
+}
+
+/**
+ * Claude 系统消息
+ */
+export interface ClaudeSystemMessage {
+  type: 'text';
+  text: string;
+  cache_control?: {
+    type: 'ephemeral';
+  };
+}
+
+/**
+ * Claude 工具定义
+ */
+export interface ClaudeTool {
+  name: string;
+  description?: string;
+  input_schema: {
+    type: 'object';
+    properties?: Record<string, any>;
+    required?: string[];
+  };
+  type?: string; // For official tools like 'web_search_20250305'
+}
+
+/**
+ * Claude 元数据
+ */
+export interface ClaudeMetadata {
+  user_id?: string;
+}
+
+/**
+ * Claude 请求
+ */
+/**
+ * Claude 工具选择类型
+ */
+export type ClaudeToolChoice =
+  | 'auto'
+  | 'none'
+  | 'any'
+  | 'required'
+  | {
+      type: 'auto' | 'any' | 'tool' | 'none';
+      name?: string;
+    };
+
+/**
+ * Claude Extended Thinking 配置
+ * 基于官方文档: https://docs.claude.com/en/docs/build-with-claude/extended-thinking
+ */
+export interface ClaudeThinking {
+  /** thinking类型 */
+  type: 'enabled' | 'disabled';
+  /** 思考预算token数
+   * 官方要求：最小1024 tokens，必须小于max_tokens
+   */
+  budget_tokens?: number;
+}
+
+export interface ClaudeRequest {
+  model: string;
+  messages: ClaudeMessage[];
+  max_tokens: number;
+  metadata?: ClaudeMetadata;
+  stop_sequences?: string[];
+  stream?: boolean;
+  system?: string | ClaudeSystemMessage[];
+  temperature?: number;
+  tools?: ClaudeTool[];
+  tool_choice?: ClaudeToolChoice;
+  top_p?: number;
+  top_k?: number;
+  thinking?: ClaudeThinking;
+  // Claude特有参数
+  'anthropic-version'?: string;
+  'anthropic-beta'?: string[];
+  type?: string; // For official tools
+}
+
+/**
+ * Claude 工具使用响应
+ */
+export interface ClaudeToolUse {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: any;
+}
+
+/**
+ * Claude 文本响应块
+ */
 export interface ClaudeTextBlock {
   type: 'text';
   text: string;
 }
 
-export interface ClaudeImageBlock {
-  type: 'image';
-  source: {
-    type: 'base64' | 'url';
-    media_type?: string;
-    data?: string;
-    url?: string;
-  };
-}
-
-export interface ClaudeToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, any>;
-}
-
-export interface ClaudeToolResultBlock {
-  type: 'tool_result';
-  tool_use_id: string;
-  content: string | ClaudeContentBlock[];
-  is_error?: boolean;
-}
-
+/**
+ * Claude 思考内容块 - Extended Thinking支持
+ * 基于官方文档：支持签名、上下文和流式响应
+ */
 export interface ClaudeThinkingBlock {
   type: 'thinking';
   thinking: string;
+  /** 思考内容的签名验证，用于多轮对话上下文维护 */
   signature?: string;
+  /** 是否为流式响应中的部分内容 */
+  streaming?: boolean;
+  /** 上下文ID，用于多轮对话追踪 */
+  contextId?: string;
+  /** 轮数，用于多轮对话追踪 */
+  turnNumber?: number;
+  /** 内部使用标记，不暴露给客户端 */
+  internal?: boolean;
 }
 
-export interface ClaudeTool {
-  name: string;
-  description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, any>;
-    required?: string[];
-  };
+/**
+ * Claude 工具结果响应
+ */
+export interface ClaudeToolResult {
+  type: 'tool_result';
+  tool_use_id: string;
+  content?: string;
+  is_error?: boolean;
+  error_code?: string;  // 可选：错误码（客户端自定义）
+  error_details?: Record<string, any>;  // 可选：错误详情（客户端自定义）
 }
 
-export type ClaudeToolChoice =
-  | { type: 'auto' }
-  | { type: 'any' }
-  | { type: 'tool'; name: string };
+/**
+ * Claude 响应内容块
+ */
+export type ClaudeContentBlock = ClaudeTextBlock | ClaudeThinkingBlock | ClaudeToolUse | ClaudeToolResult;
 
-export interface ClaudeThinkingConfig {
-  type: 'enabled' | 'disabled';
-  budget_tokens?: number;
-}
-
-export interface ClaudeMessagesRequest {
-  model: string;
-  messages: ClaudeMessage[];
-  max_tokens: number;
-  system?: string | ClaudeContentBlock[];
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  stop_sequences?: string[];
-  stream?: boolean;
-  tools?: ClaudeTool[];
-  tool_choice?: ClaudeToolChoice;
-  thinking?: ClaudeThinkingConfig;
-  metadata?: {
-    user_id?: string;
-  };
-}
-
-// ============= Response Types =============
-
-export interface ClaudeUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-}
-
-export type ClaudeStopReason =
-  | 'end_turn'
-  | 'max_tokens'
-  | 'stop_sequence'
-  | 'tool_use'
-  | 'pause_turn'
-  | 'refusal';
-
-export interface ClaudeMessagesResponse {
+/**
+ * Claude 响应
+ */
+export interface ClaudeResponse {
   id: string;
   type: 'message';
   role: 'assistant';
   content: ClaudeContentBlock[];
   model: string;
-  stop_reason: ClaudeStopReason | null;
+  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | null;
   stop_sequence: string | null;
-  usage: ClaudeUsage;
-}
-
-// ============= Streaming Types =============
-
-export type ClaudeStreamEvent =
-  | ClaudeMessageStartEvent
-  | ClaudeMessageDeltaEvent
-  | ClaudeMessageStopEvent
-  | ClaudeContentBlockStartEvent
-  | ClaudeContentBlockDeltaEvent
-  | ClaudeContentBlockStopEvent
-  | ClaudePingEvent
-  | ClaudeErrorEvent;
-
-export interface ClaudeMessageStartEvent {
-  type: 'message_start';
-  message: {
-    id: string;
-    type: 'message';
-    role: 'assistant';
-    content: [];
-    model: string;
-    stop_reason: null;
-    stop_sequence: null;
-    usage: ClaudeUsage;
-  };
-}
-
-export interface ClaudeMessageDeltaEvent {
-  type: 'message_delta';
-  delta: {
-    stop_reason: ClaudeStopReason | null;
-    stop_sequence: string | null;
-  };
   usage: {
+    input_tokens: number;
     output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
   };
 }
 
-export interface ClaudeMessageStopEvent {
-  type: 'message_stop';
-}
+/**
+ * Claude 流式事件类型
+ */
+export type ClaudeStreamEventType =
+  | 'message_start'
+  | 'content_block_start'
+  | 'ping'
+  | 'content_block_delta'
+  | 'content_block_stop'
+  | 'message_delta'
+  | 'message_stop'
+  | 'error';
 
-export interface ClaudeContentBlockStartEvent {
-  type: 'content_block_start';
-  index: number;
-  content_block:
-    | { type: 'text'; text: '' }
-    | { type: 'thinking'; thinking: '' }
-    | { type: 'tool_use'; id: string; name: string; input: {} };
-}
-
-export interface ClaudeContentBlockDeltaEvent {
-  type: 'content_block_delta';
-  index: number;
-  delta:
-    | { type: 'text_delta'; text: string }
-    | { type: 'thinking_delta'; thinking: string }
-    | { type: 'input_json_delta'; partial_json: string };
-}
-
-export interface ClaudeContentBlockStopEvent {
-  type: 'content_block_stop';
-  index: number;
-}
-
-export interface ClaudePingEvent {
-  type: 'ping';
-}
-
-export interface ClaudeErrorEvent {
-  type: 'error';
-  error: {
+/**
+ * Claude 流式事件
+ * 基于官方文档：https://docs.claude.com/zh-CN/docs/build-with-claude/streaming
+ */
+export interface ClaudeStreamEvent {
+  type: ClaudeStreamEventType;
+  message?: ClaudeResponse;
+  index?: number;
+  content_block?: ClaudeContentBlock;
+  delta?: {
+    type: 'text_delta' | 'input_json_delta' | 'thinking_delta';
+    text?: string;
+    thinking?: string;  // Extended thinking 内容delta
+    partial_json?: string;
+    stop_reason?: string;
+    stop_sequence?: string;
+    usage?: {
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+  };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  error?: {
     type: string;
     message: string;
   };
 }
 
-// ============= Token Counting Types =============
-
-export interface ClaudeCountTokensRequest {
-  model: string;
-  messages?: ClaudeMessage[];
-  system?: string | ClaudeContentBlock[];
-  tools?: ClaudeTool[];
-  tool_choice?: ClaudeToolChoice;
-}
-
-export interface ClaudeCountTokensResponse {
-  input_tokens: number;
-}
-
-// ============= Error Types =============
-
+/**
+ * Claude 错误响应
+ */
 export interface ClaudeErrorResponse {
   type: 'error';
   error: {
     type: string;
     message: string;
   };
+}
+
+/**
+ * Claude 计数请求
+ */
+export interface ClaudeCountRequest {
+  model: string;
+  messages: ClaudeMessage[];
+  system?: string | ClaudeSystemMessage[];
+  tools?: ClaudeTool[];
+}
+
+/**
+ * Claude 计数响应
+ */
+export interface ClaudeCountResponse {
+  input_tokens: number;
 }

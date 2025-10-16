@@ -2,66 +2,111 @@
  * Common utility functions
  */
 
-import { HEADERS } from './constants';
-
 /**
- * Generate a unique request ID
+ * Convert Headers object to plain object
  */
-export function generateRequestId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 15);
-  return `req_${timestamp}${randomPart}`;
+export function headersToObject(headers: Headers): Record<string, string> {
+  const result: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    result[key] = value;
+  });
+  return result;
 }
 
 /**
- * Parse API keys from comma-separated string
+ * Mask API key for logging
  */
-export function parseApiKeys(keyString: string): string[] {
-  return keyString
-    .split(',')
-    .map((k) => k.trim())
-    .filter((k) => k.length > 0);
+export function maskApiKey(apiKey: string): string {
+  if (!apiKey || apiKey.length < 12) {
+    return '***';
+  }
+  return apiKey.substring(0, 11) + '***';
 }
 
 /**
- * Extract API key from request headers
+ * Mask sensitive data in objects for logging
  */
-export function extractApiKey(request: Request): string | null {
-  // Try x-api-key header first
-  const xApiKey = request.headers.get(HEADERS.X_API_KEY);
-  if (xApiKey) return xApiKey;
-
-  // Try Authorization header with Bearer token
-  const authHeader = request.headers.get(HEADERS.AUTHORIZATION);
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.substring(7);
+export function maskSensitiveData(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return obj;
   }
 
-  return null;
+  const sensitiveKeys = ['key', 'apikey', 'api_key', 'password', 'token', 'secret', 'authorization'];
+  const masked = { ...obj };
+
+  for (const key in masked) {
+    if (sensitiveKeys.some(sensitive => key.toLowerCase().includes(sensitive))) {
+      if (typeof masked[key] === 'string') {
+        masked[key] = maskApiKey(masked[key]);
+      }
+    }
+  }
+
+  return masked;
 }
 
 /**
- * Generate a unique message ID
+ * Get error type based on HTTP status code
  */
-export function generateMessageId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 15);
-  return `msg_${timestamp}${randomPart}`;
+export function getErrorTypeFromStatus(statusCode: number): string {
+  switch (statusCode) {
+    case 400:
+      return 'invalid_request_error';
+    case 401:
+      return 'authentication_error';
+    case 403:
+      return 'permission_error';
+    case 404:
+      return 'not_found_error';
+    case 429:
+      return 'rate_limit_error';
+    case 502:
+    case 503:
+      return 'overloaded_error';
+    case 504:
+      return 'timeout_error';
+    default:
+      return 'api_error';
+  }
 }
 
 /**
- * Generate a unique tool ID
+ * Enhanced error context for better debugging
  */
-export function generateToolId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 15);
-  return `toolu_${timestamp}${randomPart}`;
+export interface ErrorContext {
+  requestId?: string;
+  timestamp: string;
+  component: string;
+  operation: string;
+  statusCode?: number;
+  originalError?: any;
+  stack?: string;
+  additionalData?: Record<string, any>;
 }
 
 /**
- * Generate a random ID without prefix (internal use)
+ * Create standardized error context
  */
-export function generateRandomId(): string {
-  return Math.random().toString(36).substring(2, 15) +
-    Math.random().toString(36).substring(2, 15);
+export function createErrorContext(
+  component: string,
+  operation: string,
+  error: any,
+  additionalData?: Record<string, any>
+): ErrorContext {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  return {
+    timestamp: new Date().toISOString(),
+    component,
+    operation,
+    originalError: {
+      message: errorMessage,
+      name: error instanceof Error ? error.name : 'UnknownError',
+      ...error
+    },
+    stack: errorStack,
+    additionalData
+  };
 }
+

@@ -1,51 +1,138 @@
 /**
- * Token counting transformation between Claude and Gemini
+ * Count Tokens 转换器
+ * 负责将 Claude count_tokens 请求转换为 Gemini countTokens 格式
  */
 
-import type {
-  ClaudeCountTokensRequest,
-  ClaudeCountTokensResponse,
-} from '../types/claude';
-import type {
-  GeminiCountTokensRequest,
-  GeminiCountTokensResponse,
-} from '../types/gemini';
-import { transformRequestToGemini } from './request-transformer';
+import { ClaudeCountRequest } from '../types/claude';
+import { ContentTransformer } from './content-transformer';
 
 /**
- * Transform Claude count tokens request to Gemini count tokens request
+ * Gemini countTokens 请求格式
+ * 注意：Gemini countTokens API 不支持 tools 字段
  */
-export function transformCountTokensRequestToGemini(
-  request: ClaudeCountTokensRequest
-): GeminiCountTokensRequest {
-  // Create a minimal messages request to reuse the transformation logic
-  const messagesRequest = {
-    model: request.model,
-    max_tokens: 1, // Not used for token counting
-    messages: request.messages || [],
-    system: request.system,
-    tools: request.tools,
-    tool_choice: request.tool_choice,
-  };
-
-  // Transform to Gemini format
-  const geminiRequest = transformRequestToGemini(messagesRequest);
-
-  return {
-    contents: geminiRequest.contents,
-    systemInstruction: geminiRequest.systemInstruction,
-    tools: geminiRequest.tools,
-    toolConfig: geminiRequest.toolConfig,
+export interface GeminiCountTokensRequest {
+  contents: Array<{
+    role: string;
+    parts: Array<{ text: string }>;
+  }>;
+  systemInstruction?: {
+    role: string;
+    parts: Array<{ text: string }>;
   };
 }
 
 /**
- * Transform Gemini count tokens response to Claude count tokens response
+ * Gemini countTokens 响应格式
  */
-export function transformCountTokensResponseToClaude(
-  response: GeminiCountTokensResponse
-): ClaudeCountTokensResponse {
-  return {
-    input_tokens: response.totalTokens,
-  };
+export interface GeminiCountTokensResponse {
+  totalTokens: number;
+  cachedContentTokenCount?: number;
+}
+
+/**
+ * Claude count_tokens 响应格式
+ */
+export interface ClaudeCountTokensResponse {
+  input_tokens: number;
+}
+
+export class CountTokensTransformer {
+  /**
+   * 转换 Claude count_tokens 请求到 Gemini countTokens 格式
+   */
+  static async transformCountRequest(
+    claudeRequest: ClaudeCountRequest
+  ): Promise<GeminiCountTokensRequest> {
+    const geminiRequest: GeminiCountTokensRequest = {
+      contents: []
+    };
+
+    // 1. 转换消息
+    if (claudeRequest.messages && claudeRequest.messages.length > 0) {
+      for (const message of claudeRequest.messages) {
+        const parts = await ContentTransformer.transformContent(message.content);
+
+        // 只提取文本部分用于计数
+        const textParts = parts
+          .filter(p => 'text' in p && p.text)
+          .map(p => ({ text: (p as any).text }));
+
+        if (textParts.length > 0) {
+          geminiRequest.contents.push({
+            role: message.role === 'assistant' ? 'model' : 'user',
+            parts: textParts
+          });
+        }
+      }
+    }
+
+    // 2. 转换系统消息
+    if (claudeRequest.system) {
+      const systemText = typeof claudeRequest.system === 'string'
+        ? claudeRequest.system
+        : Array.isArray(claudeRequest.system)
+          ? claudeRequest.system.map(s => s.text).join('\n')
+          : '';
+
+      if (systemText) {
+        geminiRequest.systemInstruction = {
+          role: 'system',
+          parts: [{ text: systemText }]
+        };
+      }
+    }
+
+    // 注意：Gemini countTokens API 不支持 tools 字段
+    // Claude API 的 tools 参数在 Gemini 中无法直接计算 token
+    // 如果需要包含 tools 的准确 token 计数，需要使用完整的 generateContent API
+
+    return geminiRequest;
+  }
+
+  /**
+   * 转换 Gemini countTokens 响应到 Claude 格式
+   */
+  static transformCountResponse(
+    geminiResponse: GeminiCountTokensResponse
+  ): ClaudeCountTokensResponse {
+    return {
+      input_tokens: geminiResponse.totalTokens || 0
+    };
+  }
+
+  /**
+   * 验证 count_tokens 请求
+   */
+  static validateCountRequest(request: ClaudeCountRequest): string | null {
+    if (!request.model) {
+      return 'Missing required field: model';
+    }
+
+    if (!request.messages || !Array.isArray(request.messages)) {
+      return 'Missing or invalid field: messages (must be an array)';
+    }
+
+    if (request.messages.length === 0) {
+      return 'messages array cannot be empty';
+    }
+
+    // 验证每条消息
+    for (let i = 0; i < request.messages.length; i++) {
+      const message = request.messages[i];
+
+      if (!message.role) {
+        return `messages[${i}]: Missing required field: role`;
+      }
+
+      if (!['user', 'assistant'].includes(message.role)) {
+        return `messages[${i}]: Invalid role: ${message.role}. Must be 'user' or 'assistant'`;
+      }
+
+      if (!message.content) {
+        return `messages[${i}]: Missing required field: content`;
+      }
+    }
+
+    return null; // 验证通过
+  }
 }

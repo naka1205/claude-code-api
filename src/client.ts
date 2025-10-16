@@ -1,197 +1,224 @@
 /**
- * Gemini API Client with API key rotation support
+ * Gemini API客户端 - Cloudflare Workers版本
+ * 使用Fetch API处理对Gemini API的HTTP调用
  */
 
-import type {
-  GeminiGenerateContentRequest,
-  GeminiGenerateContentResponse,
-  GeminiCountTokensRequest,
-  GeminiCountTokensResponse,
-  GeminiStreamChunk,
-} from './types/gemini';
-import { getGeminiModel } from './models';
-import type { Config } from './config';
-import { ApiKeyRotator } from './utils/key-rotator';
+import { headersToObject } from './utils/common';
+import { TIMEOUTS } from './utils/constants';
 
-export class GeminiClient {
-  private config: Config;
-  private keyRotator: ApiKeyRotator;
+/**
+ * API客户端配置
+ */
+export interface ApiClientConfig {
+  baseUrl?: string;
+  timeout?: number;
+}
 
-  constructor(config: Config, apiKeys: string[]) {
-    this.config = config;
-    this.keyRotator = new ApiKeyRotator(apiKeys);
+/**
+ * API响应接口
+ */
+export interface ApiResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: any;
+  isStream: boolean;
+}
+
+/**
+ * 流式响应接口
+ */
+export interface StreamResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  stream: ReadableStream;
+}
+
+/**
+ * Gemini API客户端 - Workers版本
+ */
+export class GeminiApiClient {
+  private apiKeys: string[];
+  private baseUrl: string;
+  private timeout: number;
+
+  constructor(apiKeys: string | string[], config: ApiClientConfig = {}) {
+    this.apiKeys = Array.isArray(apiKeys) ? apiKeys : [apiKeys];
+    this.baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com';
+    this.timeout = config.timeout || TIMEOUTS.API_CALL;
+
+    if (this.apiKeys.length === 0) {
+      throw new Error('At least one API key is required');
+    }
+
+    
   }
 
   /**
-   * Generate content (non-streaming)
+   * 随机选择一个API密钥
    */
-  async generateContent(
-    request: GeminiGenerateContentRequest,
-    claudeModel: string
-  ): Promise<GeminiGenerateContentResponse> {
-    try {
-      const geminiModel = getGeminiModel(claudeModel);
-      const url = this.buildUrl(geminiModel, 'generateContent');
-      const apiKey = this.keyRotator.getNextKey();
+  private selectRandomApiKey(): string {
+    const randomIndex = Math.floor(Math.random() * this.apiKeys.length);
+    const selectedKey = this.apiKeys[randomIndex];
 
-      const response = await fetch(url, {
+    if (!selectedKey) {
+      throw new Error('Selected API key is undefined');
+    }
+
+    
+
+    return selectedKey;
+  }
+
+  /**
+   * 发送请求到Gemini API
+   */
+  async sendRequest(
+    endpoint: string,
+    data: any,
+    isStream: boolean = false,
+    requestId?: string
+  ): Promise<ApiResponse | StreamResponse> {
+    const apiKey = this.selectRandomApiKey();
+    const url = new URL(endpoint, this.baseUrl);
+
+
+    // 添加API密钥到查询参数
+    url.searchParams.set('key', apiKey);
+
+    // 添加流式参数
+    if (isStream) {
+      url.searchParams.set('alt', 'sse');
+    }
+
+    // 添加请求体大小日志
+    const requestBody = JSON.stringify(data);
+    const requestSize = new Blob([requestBody]).size;
+
+
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    // 保存Gemini请求数据
+    // 移除调试功能以提升性能
+
+    try {
+      const response = await fetch(url.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
+          'User-Agent': 'gemini-code/2.0.0-workers',
+          ...(isStream && { 'Accept': 'text/event-stream' })
         },
-        body: JSON.stringify(request),
+        body: requestBody,
+        signal: controller.signal
       });
 
-      if (!response.ok) {
+      clearTimeout(timeoutId);
+
+      const headers = headersToObject(response.headers);
+
+      
+
+      if (response.status >= 400) {
         const errorText = await response.text();
-        let error;
+
+        // Enhanced error logging for API errors
+        console.error('[GeminiApiClient] API error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          endpoint,
+          url: url.toString(),
+          responseText: errorText,
+          headers: headersToObject(response.headers),
+          timestamp: new Date().toISOString()
+        });
+
+        // Try to parse as JSON
+        let errorBody;
         try {
-          error = JSON.parse(errorText);
-        } catch (e) {
-          error = { message: errorText };
+          errorBody = JSON.parse(errorText);
+        } catch (parseError) {
+          console.warn('[GeminiApiClient] Failed to parse error response as JSON:', {
+            parseError: parseError instanceof Error ? parseError.message : String(parseError),
+            originalText: errorText
+          });
+          errorBody = { message: errorText };
         }
-        const errorMessage = `Gemini API error (${response.status}): ${JSON.stringify(error)}`;
-        console.error('[GeminiClient] generateContent failed:', errorMessage);
-        throw new Error(errorMessage);
+
+        // 保存Gemini错误响应数据
+        // 移除调试功能以提升性能
+
+        return {
+          statusCode: response.status,
+          headers,
+          body: errorBody,
+          isStream: false
+        } as ApiResponse;
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('[GeminiClient] generateContent exception:', error);
+      if (isStream && response.body) {
+        // 保存流式响应的初始数据
+        // 移除调试功能以提升性能
+
+        return {
+          statusCode: response.status,
+          headers,
+          stream: response.body
+        } as StreamResponse;
+      } else {
+        const body = await response.json();
+
+        // 保存非流式响应数据
+        // 移除调试功能以提升性能
+
+        return {
+          statusCode: response.status,
+          headers,
+          body,
+          isStream: false
+        } as ApiResponse;
+      }
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+
+      // Enhanced error logging with context
+      const errorContext = {
+        component: 'GeminiApiClient',
+        operation: 'sendRequest',
+        endpoint,
+        url: url.toString(),
+        isStream,
+        timeout: this.timeout,
+        apiKeyMasked: this.apiKeys[0]?.substring(0, 11) + '***'
+      };
+
+      if (error.name === 'AbortError') {
+        const timeoutError = new Error(`Request timeout after ${this.timeout}ms`);
+        console.error('[GeminiApiClient] Request timeout:', {
+          ...errorContext,
+          error: timeoutError.message,
+          stack: timeoutError.stack,
+          timestamp: new Date().toISOString()
+        });
+        throw timeoutError;
+      }
+
+      // Log detailed network error information
+      console.error('[GeminiApiClient] Network request failed:', {
+        ...errorContext,
+        error: {
+          message: error.message,
+          name: error.name,
+          code: error.code,
+          cause: error.cause
+        },
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
+
       throw error;
     }
   }
 
-  /**
-   * Generate content (streaming)
-   */
-  async *generateContentStream(
-    request: GeminiGenerateContentRequest,
-    claudeModel: string
-  ): AsyncGenerator<GeminiStreamChunk> {
-    try {
-      const geminiModel = getGeminiModel(claudeModel);
-      const url = this.buildUrl(geminiModel, 'streamGenerateContent', { alt: 'sse' });
-      const apiKey = this.keyRotator.getNextKey();
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(request),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let error;
-        try {
-          error = JSON.parse(errorText);
-        } catch (e) {
-          error = { message: errorText };
-        }
-        const errorMessage = `Gemini API error (${response.status}): ${JSON.stringify(error)}`;
-        console.error('[GeminiClient] generateContentStream failed:', errorMessage);
-        throw new Error(errorMessage);
-      }
-
-      if (!response.body) {
-        const errorMessage = 'No response body from Gemini API';
-        console.error('[GeminiClient] generateContentStream failed:', errorMessage);
-        throw new Error(errorMessage);
-      }
-
-      // Parse SSE stream
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data.trim()) {
-              try {
-                const chunk = JSON.parse(data);
-                yield chunk;
-              } catch (e) {
-                console.error('[GeminiClient] Failed to parse SSE data:', { data, error: e });
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[GeminiClient] generateContentStream exception:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Count tokens
-   */
-  async countTokens(
-    request: GeminiCountTokensRequest,
-    claudeModel: string
-  ): Promise<GeminiCountTokensResponse> {
-    try {
-      const geminiModel = getGeminiModel(claudeModel);
-      const url = this.buildUrl(geminiModel, 'countTokens');
-      const apiKey = this.keyRotator.getNextKey();
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(request),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let error;
-        try {
-          error = JSON.parse(errorText);
-        } catch (e) {
-          error = { message: errorText };
-        }
-        const errorMessage = `Gemini API error (${response.status}): ${JSON.stringify(error)}`;
-        console.error('[GeminiClient] countTokens failed:', errorMessage);
-        throw new Error(errorMessage);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('[GeminiClient] countTokens exception:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Build Gemini API URL
-   */
-  private buildUrl(
-    model: string,
-    method: string,
-    params?: Record<string, string>
-  ): string {
-    const base = `${this.config.geminiBaseUrl}/${this.config.geminiApiVersion}/models/${model}:${method}`;
-
-    if (params) {
-      const queryString = new URLSearchParams(params).toString();
-      return `${base}?${queryString}`;
-    }
-
-    return base;
-  }
 }

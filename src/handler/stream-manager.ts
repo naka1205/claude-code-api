@@ -1,100 +1,82 @@
 /**
- * SSE streaming manager
+ * 流管理器 - Cloudflare Workers版本
+ * 处理SSE流式响应
  */
 
-import type { ClaudeStreamEvent } from '../types/claude';
-import type { GeminiStreamChunk } from '../types/gemini';
-import { StreamTransformer, formatSSE } from '../transformers/stream-transformer';
-import { logger } from '../utils/logger';
-import { logGeminiStreamChunk, logClaudeStreamEvent } from '../utils/request-logger';
-import { shouldIncludeThinking } from '../transformers/thinking-transformer';
+import { StreamTransformer } from '../transformers/stream-transformer';
 
 export class StreamManager {
-  async streamResponse(
-    geminiStream: AsyncGenerator<GeminiStreamChunk>,
+  /**
+   * 处理流式响应
+   */
+  handleStreamResponse(
+    stream: ReadableStream,
     claudeModel: string,
-    writer: WritableStreamDefaultWriter<Uint8Array>,
-    requestId?: string,
-    requestThinking?: any,
-    betaFlags?: string[]
-  ): Promise<void> {
-    const encoder = new TextEncoder();
-    const exposeThinking = shouldIncludeThinking(requestThinking, betaFlags);
-    const transformer = new StreamTransformer(claudeModel, exposeThinking);
-
+    headers: Record<string, string>,
+    exposeThinkingToClient: boolean = false,
+    requestId?: string
+  ): Response {
     try {
-      logger.info('Starting stream processing', { requestId, model: claudeModel, exposeThinking });
+      // 创建转换后的流
+      const transformedStream = StreamTransformer.createStreamPipeline(
+        stream,
+        claudeModel,
+        exposeThinkingToClient,
+        requestId
+      );
 
-      let chunkCount = 0;
-
-      for await (const chunk of geminiStream) {
-        chunkCount++;
-        logger.debug(`Processing stream chunk ${chunkCount}`, { requestId });
-
-        if (requestId) {
-          logGeminiStreamChunk(requestId, chunk);
+      // 返回SSE响应
+      return new Response(transformedStream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
+          'Access-Control-Allow-Credentials': 'true',
+          'X-Accel-Buffering': 'no',
+          'X-Content-Type-Options': 'nosniff'
         }
-
-        const events = transformer.transformChunk(chunk);
-
-        for (const event of events) {
-          if (requestId) {
-            logClaudeStreamEvent(requestId, event);
-          }
-
-          const sseMessage = formatSSE(event);
-          await writer.write(encoder.encode(sseMessage));
-        }
-      }
-
-      const stopEvent = transformer.createMessageStopEvent();
-      await writer.write(encoder.encode(formatSSE(stopEvent)));
-
-      logger.info('Stream completed successfully', {
-        requestId,
-        totalChunks: chunkCount,
       });
-
-      await writer.close();
     } catch (error) {
-      logger.error('Stream processing failed', error, { requestId });
-
-      try {
-        const errorEvent: ClaudeStreamEvent = {
-          type: 'error',
-          error: {
-            type: 'api_error',
-            message: (error as Error).message || 'Stream processing failed',
-          },
-        };
-        await writer.write(encoder.encode(formatSSE(errorEvent)));
-        await writer.close();
-      } catch (writeError) {
-        logger.error('Failed to send error event', writeError, { requestId });
-      }
-
-      throw error;
+      // 创建错误流
+      const errorStream = this.createErrorStream(error);
+      return new Response(errorStream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
     }
   }
 
   /**
-   * Create SSE stream response
+   * 创建错误流
    */
-  createStreamResponse(): { response: Response; writer: WritableStreamDefaultWriter<Uint8Array> } {
-    const { readable, writable } = new TransformStream();
-    const writer = writable.getWriter();
+  private createErrorStream(error: any): ReadableStream {
+    const encoder = new TextEncoder();
+    const errorMessage = error instanceof Error ? error.message : 'Stream processing error';
 
-    const response = new Response(readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
+    return new ReadableStream({
+      start(controller) {
+        // 发送错误事件
+        const errorEvent = {
+          type: 'error',
+          error: {
+            type: 'stream_error',
+            message: errorMessage
+          }
+        };
+
+        controller.enqueue(
+          encoder.encode(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`)
+        );
+        controller.close();
+      }
     });
-
-    return { response, writer };
   }
 }
-
-// Singleton instance
-export const streamManager = new StreamManager();

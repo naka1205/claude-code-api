@@ -1,46 +1,68 @@
 /**
- * Common types used across the application
+ * 通用类型定义
+ * 仅保留实际使用的类型
  */
 
-export interface Env {
-  // Cloudflare KV namespace
-  KV?: KVNamespace;
+/**
+ * API 提供商类型
+ */
+export type ApiProvider = 'claude' | 'gemini';
 
-  // Environment variables
-  GEMINI_API_KEY?: string;
-  GEMINI_BASE_URL?: string;
-  GEMINI_API_VERSION?: string;
-  ALLOWED_ORIGINS?: string;
-  ENABLE_LOGGING?: string;
-}
-
-export interface RequestContext {
-  requestId: string;
-  timestamp: number;
-  apiKey: string;
-  apiKeys: string[];
-  env: Env;
-}
-
-export interface TransformContext {
-  requestId: string;
-  isStreaming: boolean;
-  hasTools: boolean;
-  hasThinking: boolean;
-}
-
+/**
+ * API 错误类型
+ */
 export interface ApiError {
-  type: string;
+  code: string;
   message: string;
-  status?: number;
+  details?: any;
+  statusCode?: number;
 }
 
-export interface StreamState {
-  messageId: string;
-  model: string;
-  contentBlocks: any[];
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
+/**
+ * 转换错误类
+ */
+export class TransformationError extends Error {
+  public code: string;
+  public details?: any;
+
+  constructor(message: string, code: string = 'TRANSFORMATION_ERROR', details?: any) {
+    super(message);
+    this.name = 'TransformationError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
+/**
+ * 验证错误类
+ */
+export class ValidationError extends Error {
+  public code: string;
+  public field?: string;
+  public details?: any;
+
+  constructor(message: string, field?: string, details?: any) {
+    super(message);
+    this.name = 'ValidationError';
+    this.code = 'VALIDATION_ERROR';
+    this.field = field;
+    this.details = details;
+  }
+}
+
+/**
+ * API 客户端错误类
+ */
+export class ApiClientError extends Error {
+  public statusCode: number;
+  public code: string;
+  public details?: any;
+
+  constructor(message: string, statusCode: number, code: string = 'API_ERROR', details?: any) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
 }
