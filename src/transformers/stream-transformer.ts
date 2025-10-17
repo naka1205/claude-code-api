@@ -70,6 +70,8 @@ class StreamStateManager {
   private finalFinishReason: string = '';
   private finalUsageMetadata: any = null;
 
+  private indexMap: Map<number, number> = new Map();
+
   /**
    * 检查消息是否已开始
    */
@@ -203,12 +205,7 @@ class StreamStateManager {
       return delta;
     }
 
-    // 检查是否已包含
-    if (this.accumulatedText.includes(newText.trim())) {
-      return null;
-    }
-
-    // 全新内容
+    // 全新内容 - 直接追加
     const delta = newText;
     this.accumulatedText += newText;
     return delta;
@@ -258,6 +255,13 @@ class StreamStateManager {
   markFunctionCallProcessed(functionCall: any): void {
     const signature = JSON.stringify({ name: functionCall.name, args: functionCall.args });
     this.processedFunctionCalls.add(signature);
+  }
+
+  /**
+   * 检查是否有工具调用
+   */
+  hasToolUse(): boolean {
+    return this.processedFunctionCalls.size > 0;
   }
 
   /**
@@ -350,25 +354,28 @@ class StreamStateManager {
 
     for (const event of this.claudeEvents) {
       if (event.type === 'content_block_start') {
+        const streamIndex = event.data.index;
+        const arrayIndex = contentBlocks.length;
+        this.indexMap.set(streamIndex, arrayIndex);
+
         const block = event.data.content_block;
         if (block.type === 'text') {
-          block.text = '';
-          contentBlocks.push(block);
+          contentBlocks.push({ type: 'text', text: '' });
         } else if (block.type === 'thinking') {
-          block.thinking = '';
-          contentBlocks.push(block);
+          contentBlocks.push({ type: 'thinking', thinking: '' });
         } else if (block.type === 'tool_use') {
-          contentBlocks.push(block);
+          contentBlocks.push({ ...block });
         }
       } else if (event.type === 'content_block_delta') {
         const delta = event.data.delta;
-        const index = event.data.index;
+        const streamIndex = event.data.index;
+        const arrayIndex = this.indexMap.get(streamIndex);
 
-        if (contentBlocks[index]) {
+        if (arrayIndex !== undefined && contentBlocks[arrayIndex]) {
           if (delta.type === 'text_delta') {
-            contentBlocks[index].text += delta.text;
+            contentBlocks[arrayIndex].text += delta.text;
           } else if (delta.type === 'thinking_delta') {
-            contentBlocks[index].thinking += delta.thinking;
+            contentBlocks[arrayIndex].thinking += delta.thinking;
           }
         }
       } else if (event.type === 'message_delta') {
@@ -419,12 +426,23 @@ export class StreamTransformer {
   /**
    * 转换 Gemini finishReason 为 Claude stop_reason
    */
-  private static transformStopReason(finishReason: string, finishMessage?: string): {
+  private static transformStopReason(
+    finishReason: string,
+    finishMessage?: string,
+    hasToolUse?: boolean
+  ): {
     stop_reason: string;
     stop_sequence?: string;
   } {
     // 优先根据 finishMessage 判断
     if (finishMessage === "Model generated function call(s).") {
+      return { stop_reason: 'tool_use' };
+    }
+
+    // Gemini的已知bug: 当有function call时，finishReason返回"STOP"而不是专门的tool_call
+    // 参考: https://github.com/BerriAI/litellm/issues/12240
+    // 解决方案: 检查响应中是否实际包含了functionCall
+    if (hasToolUse) {
       return { stop_reason: 'tool_use' };
     }
 
@@ -812,7 +830,8 @@ export class StreamTransformer {
                 // 转换 stop_reason
                 const stopInfo = StreamTransformer.transformStopReason(
                   candidate.finishReason || 'STOP',
-                  candidate.finishMessage
+                  candidate.finishMessage,
+                  stateManager.hasToolUse()
                 );
 
                 // 发送 message_delta
