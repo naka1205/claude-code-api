@@ -860,10 +860,10 @@ export class StreamTransformer {
       },
 
       flush(controller) {
+        const encoder = new TextEncoder();
+
         // 确保所有块都被正确结束
         if (stateManager.isMessageStarted() && !stateManager.isCompleted()) {
-          const encoder = new TextEncoder();
-
           // 结束 thinking 块
           if (stateManager.isThinkingBlockStarted()) {
             const thinkingBlockStop = { type: 'content_block_stop', index: stateManager.startThinkingBlock() };
@@ -886,23 +886,25 @@ export class StreamTransformer {
 
           const messageStop = { type: 'message_stop' };
           controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(messageStop)}\n\n`));
+        }
 
-          // 记录聚合的响应
-          if (requestId) {
-            const geminiResponse = stateManager.getAggregatedGeminiResponse();
-            if (geminiResponse) {
-              Logger.logGeminiResponse(
-                requestId,
-                200,
-                'OK',
-                {},
-                geminiResponse
-              );
-            }
+        // 记录聚合的响应（无论是否完成都要记录）
+        if (requestId && stateManager.isMessageStarted()) {
+          const geminiResponse = stateManager.getAggregatedGeminiResponse();
+          if (geminiResponse) {
+            Logger.logGeminiResponse(
+              requestId,
+              200,
+              'OK',
+              {},
+              geminiResponse
+            );
+          }
 
-            const claudeResponse = stateManager.getAggregatedClaudeResponse(messageId, claudeModel);
-            Logger.logClaudeResponse(requestId, claudeResponse);
+          const claudeResponse = stateManager.getAggregatedClaudeResponse(messageId, claudeModel);
+          Logger.logClaudeResponse(requestId, claudeResponse);
 
+          if (!stateManager.isCompleted()) {
             Logger.finishRequest(requestId);
           }
         }
