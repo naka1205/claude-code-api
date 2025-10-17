@@ -433,7 +433,8 @@ export class StreamTransformer {
   private static transformStopReason(
     finishReason: string,
     finishMessage?: string,
-    hasToolUse?: boolean
+    hasToolUse?: boolean,
+    onlyThinking?: boolean
   ): {
     stop_reason: string;
     stop_sequence?: string;
@@ -448,6 +449,13 @@ export class StreamTransformer {
     // 解决方案: 检查响应中是否实际包含了functionCall
     if (hasToolUse) {
       return { stop_reason: 'tool_use' };
+    }
+
+    // Gemini的已知bug: thinking超出token限制时，finishReason返回"STOP"而不是"MAX_TOKENS"
+    // 并且响应中只有thinking,没有text或tool_use (场景8: 错误场景)
+    // 参考: https://github.com/googleapis/python-genai/issues/782
+    if (onlyThinking && finishReason?.toUpperCase() === 'STOP') {
+      return { stop_reason: 'max_tokens' };
     }
 
     switch (finishReason?.toUpperCase()) {
@@ -831,11 +839,18 @@ export class StreamTransformer {
                 const outputTokens = geminiChunk.usageMetadata?.candidatesTokenCount || 0;
                 stateManager.setOutputTokens(outputTokens);
 
+                // 检测异常情况: 仅thinking,无text或tool_use (场景8: 错误场景)
+                // 这是Gemini的已知bug: thinking超出token限制但finishReason返回STOP而不是MAX_TOKENS
+                // 参考: https://github.com/googleapis/python-genai/issues/782
+                const hasContent = stateManager.isTextBlockStarted() || stateManager.hasToolUse();
+                const onlyThinking = stateManager.isThinkingBlockStarted() && !hasContent;
+
                 // 转换 stop_reason
                 const stopInfo = StreamTransformer.transformStopReason(
                   candidate.finishReason || 'STOP',
                   candidate.finishMessage,
-                  stateManager.hasToolUse()
+                  stateManager.hasToolUse(),
+                  onlyThinking  // 传入异常检测结果
                 );
 
                 // 发送 message_delta
