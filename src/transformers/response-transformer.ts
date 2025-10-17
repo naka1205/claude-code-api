@@ -80,8 +80,8 @@ export class ResponseTransformer {
         );
       }
 
-      // 转换停止原因
-      const { stopReason, stopSequence } = this.transformStopReason(candidate);
+      // 转换停止原因 - 传入contentBlocks以检测Gemini API的BUG
+      const { stopReason, stopSequence } = this.transformStopReason(candidate, contentBlocks);
 
       // 转换使用统计
       const usage = transformOptions.includeUsageStats
@@ -273,15 +273,46 @@ export class ResponseTransformer {
 
   /**
    * 转换停止原因
+   * 修复Gemini API的已知BUG,与流式转换保持一致
    */
-  private static transformStopReason(candidate: GeminiCandidate): {
+  private static transformStopReason(
+    candidate: GeminiCandidate,
+    contentBlocks?: ClaudeContentBlock[]
+  ): {
     stopReason: ClaudeResponse['stop_reason'];
     stopSequence: string | null;
   } {
     const finishReason = candidate.finishReason?.toUpperCase();
+    const finishMessage = (candidate as any).finishMessage;
 
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
     let stopSequence: string | null = null;
+
+    // 优先根据 finishMessage 判断
+    if (finishMessage === "Model generated function call(s).") {
+      return { stopReason: 'tool_use', stopSequence: null };
+    }
+
+    // Gemini的已知bug #1: 当有function call时，finishReason返回"STOP"而不是专门的tool_call
+    // 参考: https://github.com/BerriAI/litellm/issues/12240
+    // 解决方案: 检查响应中是否实际包含了functionCall
+    const hasToolUse = contentBlocks?.some(block => block.type === 'tool_use') || false;
+    if (hasToolUse) {
+      return { stopReason: 'tool_use', stopSequence: null };
+    }
+
+    // Gemini的已知bug #2: thinking超出token限制时，finishReason返回"STOP"而不是"MAX_TOKENS"
+    // 并且响应中只有thinking,没有text或tool_use (场景8: 错误场景)
+    // 参考: https://github.com/googleapis/python-genai/issues/782
+    const hasThinking = contentBlocks?.some(block => block.type === 'thinking') || false;
+    const hasContent = contentBlocks?.some(block =>
+      block.type === 'text' || block.type === 'tool_use'
+    ) || false;
+    const onlyThinking = hasThinking && !hasContent;
+
+    if (onlyThinking && finishReason === 'STOP') {
+      return { stopReason: 'max_tokens', stopSequence: null };
+    }
 
     switch (finishReason) {
       case 'STOP':
