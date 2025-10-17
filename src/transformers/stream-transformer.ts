@@ -126,6 +126,8 @@ class StreamStateManager {
    */
   stopThinkingBlock(): void {
     this.thinkingBlockStarted = false;
+    // 重置累积的thinking,为下一个thinking块做准备
+    this.accumulatedThinking = '';
   }
 
   /**
@@ -184,6 +186,8 @@ class StreamStateManager {
    */
   stopTextBlock(): void {
     this.textBlockStarted = false;
+    // 重置累积的文本,为下一个文本块做准备
+    this.accumulatedText = '';
   }
 
   /**
