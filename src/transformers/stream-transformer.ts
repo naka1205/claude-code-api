@@ -55,19 +55,20 @@ class StreamStateManager {
   private textBlockIndex: number = -1;
   private currentBlockIndex: number = 0;
 
-  // 累积的内容（用于去重）
   private accumulatedThinking: string = '';
   private accumulatedText: string = '';
 
-  // thinking signature
   private thinkingSignature: string = '';
 
-  // token统计
   private totalInputTokens: number = 0;
   private totalOutputTokens: number = 0;
 
-  // 去重集合
   private processedFunctionCalls: Set<string> = new Set();
+
+  private geminiChunks: any[] = [];
+  private claudeEvents: Array<{ type: string; data: any }> = [];
+  private finalFinishReason: string = '';
+  private finalUsageMetadata: any = null;
 
   /**
    * 检查消息是否已开始
@@ -293,6 +294,107 @@ class StreamStateManager {
   isCompleted(): boolean {
     return this.state === StreamState.COMPLETED;
   }
+
+  addGeminiChunk(chunk: any): void {
+    this.geminiChunks.push(chunk);
+
+    if (chunk.candidates?.[0]?.finishReason) {
+      this.finalFinishReason = chunk.candidates[0].finishReason;
+    }
+    if (chunk.usageMetadata) {
+      this.finalUsageMetadata = chunk.usageMetadata;
+    }
+  }
+
+  addClaudeEvent(eventType: string, data: any): void {
+    this.claudeEvents.push({ type: eventType, data });
+  }
+
+  getAggregatedGeminiResponse(): any {
+    if (this.geminiChunks.length === 0) return null;
+
+    const allParts: any[] = [];
+    let role = 'model';
+
+    for (const chunk of this.geminiChunks) {
+      const parts = chunk.candidates?.[0]?.content?.parts;
+      if (parts && Array.isArray(parts)) {
+        allParts.push(...parts);
+      }
+      if (chunk.candidates?.[0]?.content?.role) {
+        role = chunk.candidates[0].content.role;
+      }
+    }
+
+    return {
+      candidates: [{
+        content: {
+          parts: allParts,
+          role
+        },
+        finishReason: this.finalFinishReason || 'STOP',
+        index: 0
+      }],
+      usageMetadata: this.finalUsageMetadata || {
+        promptTokenCount: this.totalInputTokens,
+        candidatesTokenCount: this.totalOutputTokens,
+        totalTokenCount: this.totalInputTokens + this.totalOutputTokens
+      }
+    };
+  }
+
+  getAggregatedClaudeResponse(messageId: string, model: string): any {
+    const contentBlocks: any[] = [];
+    let stopReason = 'end_turn';
+    let stopSequence = null;
+
+    for (const event of this.claudeEvents) {
+      if (event.type === 'content_block_start') {
+        const block = event.data.content_block;
+        if (block.type === 'text') {
+          block.text = '';
+          contentBlocks.push(block);
+        } else if (block.type === 'thinking') {
+          block.thinking = '';
+          contentBlocks.push(block);
+        } else if (block.type === 'tool_use') {
+          contentBlocks.push(block);
+        }
+      } else if (event.type === 'content_block_delta') {
+        const delta = event.data.delta;
+        const index = event.data.index;
+
+        if (contentBlocks[index]) {
+          if (delta.type === 'text_delta') {
+            contentBlocks[index].text += delta.text;
+          } else if (delta.type === 'thinking_delta') {
+            contentBlocks[index].thinking += delta.thinking;
+          }
+        }
+      } else if (event.type === 'message_delta') {
+        if (event.data.delta?.stop_reason) {
+          stopReason = event.data.delta.stop_reason;
+        }
+        if (event.data.delta?.stop_sequence) {
+          stopSequence = event.data.delta.stop_sequence;
+        }
+      }
+    }
+
+    return {
+      id: messageId,
+      type: 'message',
+      role: 'assistant',
+      content: contentBlocks,
+      model,
+      stop_reason: stopReason,
+      stop_sequence: stopSequence,
+      usage: {
+        input_tokens: this.totalInputTokens,
+        output_tokens: this.totalOutputTokens
+      }
+    };
+  }
 }
 
 export class StreamTransformer {
@@ -370,6 +472,9 @@ export class StreamTransformer {
           const sendEvent = (eventType: string, data: any) => {
             const encoded = encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
             controller.enqueue(encoded);
+
+            // 聚合 Claude 事件
+            stateManager.addClaudeEvent(eventType, data);
           };
 
           // 解析SSE格式的数据
@@ -396,6 +501,9 @@ export class StreamTransformer {
 
             try {
               const geminiChunk = JSON.parse(data) as GeminiStreamResponse;
+
+              // 聚合 Gemini 响应
+              stateManager.addGeminiChunk(geminiChunk);
 
               // 1. 发送 message_start（首次）
               if (!stateManager.isMessageStarted()) {
@@ -778,6 +886,25 @@ export class StreamTransformer {
 
           const messageStop = { type: 'message_stop' };
           controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify(messageStop)}\n\n`));
+
+          // 记录聚合的响应
+          if (requestId) {
+            const geminiResponse = stateManager.getAggregatedGeminiResponse();
+            if (geminiResponse) {
+              Logger.logGeminiResponse(
+                requestId,
+                200,
+                'OK',
+                {},
+                geminiResponse
+              );
+            }
+
+            const claudeResponse = stateManager.getAggregatedClaudeResponse(messageId, claudeModel);
+            Logger.logClaudeResponse(requestId, claudeResponse);
+
+            Logger.finishRequest(requestId);
+          }
         }
       }
     });
