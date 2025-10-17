@@ -160,12 +160,10 @@ export class ModelMapper {
 
   getRecommendedMaxTokens(geminiModel: string): number {
     const capabilities = getModelCapabilities(geminiModel);
-    // 返回一个合理的默认值，而不是模型最大值
-    // 对于2.5系列返回8192，对于2.0系列返回4096
-    if (geminiModel.startsWith('gemini-2.5')) {
-      return 8192;  // 2.5系列默认8192，足够大多数场景
+    if (capabilities) {
+      return capabilities.maxTokens;
     }
-    return 4096;  // 2.0系列默认4096
+    return 8192;
   }
 
   getSupportedModels(): string[] {

@@ -38,19 +38,19 @@ export class ThinkingTransformer {
   }> = {
       'gemini-2.5-pro': {
         min: 128,
-        max: 4576,
+        max: 8576,
         default: -1,
         canDisable: false
       },
       'gemini-2.5-flash': {
         min: 0,
-        max: 1576,
+        max: 3576,
         default: -1,
         canDisable: true
       },
       'gemini-2.5-flash-lite': {
         min: 512,
-        max: 2576,
+        max: 6276,
         default: -1,
         canDisable: true
       }
@@ -94,15 +94,15 @@ export class ThinkingTransformer {
     // 如果明确指定了thinking配置
     if (claudeThinking && claudeThinking.type === 'enabled') {
 
-      let budget: number;
-      if (claudeThinking.budget_tokens && geminiModel.includes('flash')) {
-        budget = Math.min(claudeThinking.budget_tokens, limits.max);
-        budget = Math.max(budget, limits.min);
-      } else {
-        budget = limits.default;
-      }
+      // let budget: number;
+      // if (claudeThinking.budget_tokens && geminiModel.includes('flash')) {
+      //   budget = Math.min(claudeThinking.budget_tokens, limits.max);
+      //   budget = Math.max(budget, limits.min);
+      // } else {
+      //   budget = limits.default;
+      // }
       return {
-        thinkingBudget: budget,
+        thinkingBudget: -1,
         includeThoughts: true,  // ← Gemini 返回推理文本
         exposeThoughtsToClient: true,  // ← 暴露给客户端
         exposeToClient: true

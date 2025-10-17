@@ -86,8 +86,8 @@ export class RequestTransformer {
 
       // 7. 处理 Extended Thinking（为所有情况处理thinking配置）
       const shouldProcessThinking = transformOptions.enableThinking ||
-                                   claudeRequest.thinking ||
-                                   ThinkingTransformer.modelSupportsThinking(geminiModel);
+        claudeRequest.thinking ||
+        ThinkingTransformer.modelSupportsThinking(geminiModel);
 
       if (shouldProcessThinking) {
         // Logger.info('RequestTransformer', 'Processing thinking configuration', {
@@ -321,7 +321,7 @@ export class RequestTransformer {
       } else if (message.role === 'user') {
         // 检查是否包含tool_result，如果是则作为tool角色
         if (Array.isArray(message.content) &&
-            message.content.some((c: any) => c.type === 'tool_result')) {
+          message.content.some((c: any) => c.type === 'tool_result')) {
           role = 'tool' as GeminiRole;
         } else {
           role = 'user';
@@ -487,8 +487,8 @@ If you generate any Python-like syntax for function calls, it will be rejected a
 
     // 优先级：客户端请求的max_tokens > options中指定的 > 模型推荐默认值
     let requestedMaxTokens = claudeRequest.max_tokens ||
-                             options.maxOutputTokens ||
-                             modelMapper.getRecommendedMaxTokens(geminiModel);
+      options.maxOutputTokens ||
+      modelMapper.getRecommendedMaxTokens(geminiModel);
 
     // 检查token限制
     const capabilities = modelMapper.getModelCapabilities(geminiModel);
@@ -505,7 +505,7 @@ If you generate any Python-like syntax for function calls, it will be rejected a
     }
 
     const config: GeminiGenerationConfig = {
-      maxOutputTokens: finalMaxTokens,
+      maxOutputTokens: finalMaxTokens * 2,
       temperature: claudeRequest.temperature,
       topP: claudeRequest.top_p,
       topK: claudeRequest.top_k,
@@ -592,13 +592,13 @@ If you generate any Python-like syntax for function calls, it will be rejected a
           const responseText = toolResult.content || '';
           // 检查错误标识
           return (toolResult.is_error === true) ||
-                 (typeof responseText === 'string' && (
-                   responseText.includes('MALFORMED_FUNCTION_CALL') ||
-                   responseText.includes('上游返回空内容') ||
-                   responseText.includes('finishReason=') ||
-                   responseText.includes('error') ||
-                   responseText.includes('failed')
-                 ));
+            (typeof responseText === 'string' && (
+              responseText.includes('MALFORMED_FUNCTION_CALL') ||
+              responseText.includes('上游返回空内容') ||
+              responseText.includes('finishReason=') ||
+              responseText.includes('error') ||
+              responseText.includes('failed')
+            ));
         }
         return false;
       })
