@@ -11,6 +11,3 @@ export * from './gemini';
 
 // 通用类型（错误处理、配置、测试等）
 export * from './common';
-
-// 模型相关类型
-export type { ModelCapabilities } from '../models';

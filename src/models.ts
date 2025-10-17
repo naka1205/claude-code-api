@@ -8,7 +8,7 @@
 /**
  * 模型能力接口
  */
-interface ModelCapability {
+export interface ModelCapability {
   maxTokens: number;
   supportsFunctions: boolean;
   supportsSystemInstructions: boolean;
@@ -25,7 +25,7 @@ interface ModelCapability {
  * Claude到Gemini模型映射表
  * 仅支持文档中指定的6个模型
  */
-const MODEL_MAPPING: Record<string, string> = {
+export const MODEL_MAPPING: Record<string, string> = {
   // Claude Opus 4.1 -> Gemini 2.5 Pro (视觉、工具、高级性能)
   'claude-opus-4-1-20250805': 'gemini-2.5-pro',
 
@@ -51,9 +51,9 @@ const MODEL_MAPPING: Record<string, string> = {
  * 基于Google AI Studio官方文档更新的maxTokens限制
  * 参考: https://ai.google.dev/gemini-api/docs/models/gemini
  */
-const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
+export const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
   'gemini-2.5-pro': {
-    maxTokens: 65536,  // Gemini 2.5 Pro支持最大65536输出tokens
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -65,7 +65,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 5
   },
   'gemini-2.5-flash': {
-    maxTokens: 65536,  // Gemini 2.5 Flash支持最大65536输出tokens
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -77,7 +77,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 10
   },
   'gemini-2.5-flash-lite': {
-    maxTokens: 65536,  // Gemini 2.5 Flash-Lite支持最大65536输出tokens
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -89,7 +89,7 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     freeRPM: 15
   },
   'gemini-2.0-flash': {
-    maxTokens: 8192,   // Gemini 2.0 Flash支持最大8192输出tokens
+    maxTokens: 8192,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -135,42 +135,3 @@ export function getModelCapabilities(geminiModel: string): ModelCapability {
 export function isClaudeModelSupported(model: string): boolean {
   return Object.keys(MODEL_MAPPING).includes(model.toLowerCase().trim());
 }
-
-// 导出常量供其他模块使用
-export { MODEL_MAPPING, GEMINI_MODEL_CAPABILITIES };
-
-// 保持向后兼容的ModelMapper类
-export class ModelMapper {
-  private static instance: ModelMapper;
-
-  static getInstance(): ModelMapper {
-    if (!ModelMapper.instance) {
-      ModelMapper.instance = new ModelMapper();
-    }
-    return ModelMapper.instance;
-  }
-
-  mapModel(claudeModel: string): string {
-    return mapModel(claudeModel);
-  }
-
-  getModelCapabilities(geminiModel: string): ModelCapability {
-    return getModelCapabilities(geminiModel);
-  }
-
-  getRecommendedMaxTokens(geminiModel: string): number {
-    const capabilities = getModelCapabilities(geminiModel);
-    if (capabilities) {
-      return capabilities.maxTokens;
-    }
-    return 8192;
-  }
-
-  getSupportedModels(): string[] {
-    return Object.keys(MODEL_MAPPING);
-  }
-}
-
-// 导出类型
-export type { ModelCapability };
-export type ModelCapabilities = ModelCapability; // 向后兼容
