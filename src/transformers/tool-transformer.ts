@@ -77,7 +77,7 @@ export class ToolTransformer {
     if (convertedTools.length > 0) {
       const functionDeclarations: GeminiFunctionDeclaration[] = convertedTools.map(tool => ({
         name: tool.name,
-        description: tool.description || `${tool.name} tool`,
+        description: this.simplifyToolDescription(tool.description || `${tool.name} tool`, tool.name),
         parameters: this.convertInputSchema(tool.input_schema || { type: 'object', properties: {} }, tool.name)
       }));
 
@@ -176,7 +176,7 @@ export class ToolTransformer {
       const fieldsToRemove = [
         '$schema', '$id', 'title', 'additionalProperties',
         'examples', 'default', 'format', 'pattern',
-        'minLength', 'maxLength', 'minimum', 'maximum',
+        // 'minLength', 'maxLength', 'minimum', 'maximum',
         'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'
         // 注意：enum, const 实际上是被Gemini支持的，不应该移除
       ];
@@ -394,6 +394,28 @@ export class ToolTransformer {
     }
 
     return { errors, warnings };
+  }
+
+  /**
+   * 简化工具描述 - 针对 TodoWrite 在推理模式下的问题
+   * 移除冗长的示例，保留核心说明
+   */
+  static simplifyToolDescription(description: string, toolName: string): string {
+    // 只针对 TodoWrite 进行简化
+    // if (toolName !== 'TodoWrite') {
+    //   return description;
+    // }
+    if (description.includes('<example>')) {
+      // 移除所有示例块
+      const withoutExamples = description.replace(/<example>[\s\S]*?<\/example>/g, '');
+      // 移除推理块
+      const withoutReasoning = withoutExamples.replace(/<reasoning>[\s\S]*?<\/reasoning>/g, '');
+      // 移除多余空行
+      return withoutReasoning.replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    return description;
+ 
   }
 
 }
