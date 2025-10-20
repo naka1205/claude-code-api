@@ -77,7 +77,7 @@ export class ToolTransformer {
     if (convertedTools.length > 0) {
       const functionDeclarations: GeminiFunctionDeclaration[] = convertedTools.map(tool => ({
         name: tool.name,
-        description: this.simplifyToolDescription(tool.description || `${tool.name} tool`, tool.name),
+        description: tool.description || `${tool.name} tool`,
         parameters: this.convertInputSchema(tool.input_schema || { type: 'object', properties: {} }, tool.name)
       }));
 
