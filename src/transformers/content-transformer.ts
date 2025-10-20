@@ -57,9 +57,13 @@ export class ContentTransformer {
       case 'document':
         return this.transformDocumentContent(item as ClaudeDocumentContent);
 
+      case 'thinking':
+        // 🔑 关键：处理客户端发送的thinking块（多轮对话）
+        // 根据Gemini官方文档，必须保留完整的thinking内容和signature
+        return this.transformThinkingContent(item as ClaudeThinkingBlock);
+
       case 'tool_use':
         // 转换工具使用为Gemini函数调用
-        // 验证并处理特殊工具的必要参数
         const toolArgs = this.validateToolArguments(item.name, item.input);
 
         // 生成工具调用哈希以检测重复
@@ -128,37 +132,8 @@ export class ContentTransformer {
           };
         }
 
-      case 'thinking':
-        // ⚠️ 关键：必须保留 thinking block 中的 signature！
-        // 根据 Gemini API 文档，thoughtSignature 用于维护多轮对话的推理上下文
-        // 必须将其转换回 Gemini 格式并在下一轮请求中发送
-        const thinkingBlock = item as any;
-
-        // 过滤无效的 thoughtSignature
-        // 真实的 Gemini 签名通常 >1000 字符（Base64 编码）
-        // 无效签名（undefined、null、空字符串或太短）将被忽略
-        const hasValidSignature =
-          thinkingBlock.signature &&
-          typeof thinkingBlock.signature === 'string' &&
-          thinkingBlock.signature.length > 100;
-
-        if (hasValidSignature) {
-          // 将 thinking block 转换为 Gemini 的 part 格式
-          // thoughtSignature 需要附加到一个 part 上
-          // 根据文档，可以是一个带有 text 和 thoughtSignature 的 part
-          return {
-            text: thinkingBlock.thinking || '',
-            thought: true,
-            thoughtSignature: thinkingBlock.signature
-          };
-        }
-
-        // 忽略无效的 thinking 块（无签名或客户端生成的内容）
-        // Gemini 会根据 generationConfig.thinkingConfig 自动处理推理
-        return null;
-
       default:
-        
+
         // 尝试作为文本处理
         if ((item as any).text) {
           return { text: (item as any).text };
@@ -199,60 +174,39 @@ export class ContentTransformer {
   }
 
   /**
-   * 验证工具参数，确保必要参数存在
+   * 转换thinking内容（多轮对话场景）
+   * 根据Gemini官方文档，必须保留完整的thinking内容和signature
    */
-  private static validateToolArguments(toolName: string, input: any): Record<string, any> {
-    const args = input || {};
+  private static transformThinkingContent(thinkingBlock: ClaudeThinkingBlock): GeminiTextPart | null {
+    // 过滤无效的 thoughtSignature
+    // 真实的 Gemini 签名通常 >1000 字符（Base64 编码）
+    // 无效签名（undefined、null、空字符串或太短）将被忽略
+    const hasValidSignature =
+      thinkingBlock.signature &&
+      typeof thinkingBlock.signature === 'string' &&
+      thinkingBlock.signature.length > 100;
 
-    // 根据工具名称验证必要参数
-    switch (toolName?.toLowerCase()) {
-      case 'bash':
-      case 'bash_20250124':
-        if (!args.command) {
-          
-          // 提供默认值以防止错误
-          return { command: 'echo "No command provided"' };
-        }
-        break;
-
-      case 'webfetch':
-      case 'web_fetch':
-      case 'web_fetch_20250305':
-        if (!args.url) {
-          
-          // 提供默认值以防止错误
-          return {
-            url: 'https://example.com',
-            prompt: args.prompt || 'Fetch and analyze this page'
-          };
-        }
-        if (!args.prompt) {
-          args.prompt = 'Analyze the content of this page';
-        }
-        break;
-
-      case 'websearch':
-      case 'web_search':
-      case 'web_search_20250305':
-        if (!args.query) {
-          
-          return { query: 'search query' };
-        }
-        break;
-
-      case 'code_execution':
-      case 'code_execution_20250124':
-        if (!args.code) {
-          
-          return {
-            language: args.language || 'python',
-            code: 'print("No code provided")'
-          };
-        }
-        break;
+    if (hasValidSignature) {
+      // 将 thinking block 转换为 Gemini 的 part 格式
+      // thoughtSignature 需要附加到一个 part 上
+      // 根据文档，可以是一个带有 text 和 thoughtSignature 的 part
+      return {
+        text: thinkingBlock.thinking || '',
+        thought: true,
+        thoughtSignature: thinkingBlock.signature
+      };
     }
 
-    return args;
+    // 忽略无效的 thinking 块（无签名或客户端生成的内容）
+    // Gemini 会根据 generationConfig.thinkingConfig 自动处理推理
+    return null;
+  }
+
+  /**
+   * 验证工具参数
+   */
+  private static validateToolArguments(toolName: string, input: any): Record<string, any> {
+    return input || {};
   }
 
   /**
@@ -442,8 +396,6 @@ export class ContentTransformer {
 
     // 第二轮：处理thinking内容
     if (thinkingParts.length > 0 && exposeThinkingToClient) {
-      console.log(`[ContentTransformer] Processing ${thinkingParts.length} thinking parts, expose=${exposeThinkingToClient}`);
-
       // 合并所有thinking内容为单个block
       const combinedThinking = thinkingParts.join('\n\n');
 
@@ -460,9 +412,6 @@ export class ContentTransformer {
       const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
       if (claudeSignature) {
         thinkingBlock.signature = claudeSignature;
-        console.log(`[ContentTransformer] Created thinking block with signature from Gemini`);
-      } else {
-        console.log(`[ContentTransformer] Created thinking block without signature`);
       }
 
       blocks.push(thinkingBlock);
@@ -507,17 +456,6 @@ export class ContentTransformer {
         } as ClaudeToolResult);
       }
     }
-
-    // Logger.info('ContentTransformer', `Final result: ${blocks.length} blocks (${thinkingParts.length} thinking, ${textParts.length} text)`);
-
-    // 最终fallback检查：与流式输出保持一致的处理
-    // if (blocks.length === 0 && thinkingParts.length > 0 && !exposeThinkingToClient) {
-    //   // Logger.warn('ContentTransformer', 'No content blocks generated but thinking content exists - providing fallback');
-    //   blocks.push({
-    //     type: 'text',
-    //     text: 'I have completed the analysis. To see the detailed reasoning process, please enable thinking mode.'
-    //   });
-    // }
 
     return blocks;
   }

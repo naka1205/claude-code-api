@@ -356,6 +356,8 @@ class StreamStateManager {
     let stopReason = 'end_turn';
     let stopSequence = null;
 
+    console.log('[DEBUG] getAggregatedClaudeResponse: Processing', this.claudeEvents.length, 'events');
+
     for (const event of this.claudeEvents) {
       if (event.type === 'content_block_start') {
         const streamIndex = event.data.index;
@@ -367,6 +369,7 @@ class StreamStateManager {
           contentBlocks.push({ type: 'text', text: '' });
         } else if (block.type === 'thinking') {
           contentBlocks.push({ type: 'thinking', thinking: '' });
+          console.log('[DEBUG] Created thinking block at arrayIndex:', arrayIndex);
         } else if (block.type === 'tool_use') {
           contentBlocks.push({ ...block });
         }
@@ -380,7 +383,14 @@ class StreamStateManager {
             contentBlocks[arrayIndex].text += delta.text;
           } else if (delta.type === 'thinking_delta') {
             contentBlocks[arrayIndex].thinking += delta.thinking;
+          } else if (delta.type === 'signature_delta') {
+            console.log('[DEBUG] Processing signature_delta, arrayIndex:', arrayIndex, 'signature length:', delta.signature?.length);
+            // 根据Claude官方文档，signature通过独立的signature_delta事件发送
+            (contentBlocks[arrayIndex] as any).signature = delta.signature;
+            console.log('[DEBUG] Signature set on block:', contentBlocks[arrayIndex].type, 'has signature:', !!contentBlocks[arrayIndex].signature);
           }
+        } else {
+          console.log('[DEBUG] ⚠️ Cannot find block for signature_delta, streamIndex:', streamIndex, 'arrayIndex:', arrayIndex);
         }
       } else if (event.type === 'message_delta') {
         if (event.data.delta?.stop_reason) {
@@ -391,6 +401,8 @@ class StreamStateManager {
         }
       }
     }
+
+    console.log('[DEBUG] Final contentBlocks:', contentBlocks.map(b => ({ type: b.type, hasSignature: !!b.signature })));
 
     return {
       id: messageId,
@@ -610,19 +622,23 @@ export class StreamTransformer {
 
                         // 只在有有效签名时设置
                         if (claudeSignature) {
+                          console.log('[DEBUG] 🔑 Found signature, length:', claudeSignature.length);
                           stateManager.setThinkingSignature(claudeSignature);
 
-                          // ⚠️ 关键：发送 thinking block 的最终状态（包含 signature）
-                          // 在 content_block_stop 之前，需要发送一个带有完整 signature 的 delta
-                          const thinkingSignatureDelta: ClaudeStreamEvent = {
+                          // 🔑 关键：根据Claude官方文档，signature通过独立的signature_delta事件发送
+                          // 这个事件在content_block_stop之前发送
+                          const signatureDelta: ClaudeStreamEvent = {
                             type: 'content_block_delta',
                             index: stateManager.startThinkingBlock(),
                             delta: {
-                              type: 'thinking_delta',
-                              thinking: ''  // 空内容，仅用于传递 signature 更新
+                              type: 'signature_delta' as any,
+                              signature: claudeSignature
                             }
                           };
-                          sendEvent('content_block_delta', thinkingSignatureDelta);
+                          console.log('[DEBUG] 🔑 Sending signature_delta event, index:', stateManager.startThinkingBlock());
+                          sendEvent('content_block_delta', signatureDelta);
+                        } else {
+                          console.log('[DEBUG] ❌ No claudeSignature after conversion, geminiSignature:', geminiSignature?.substring(0, 50));
                         }
 
                         // 结束 thinking 块
@@ -646,22 +662,46 @@ export class StreamTransformer {
                   }
 
                   // 2.2 处理包含 thoughtSignature 但无 thought 标记的文本
-                  // 这种情况下，thoughtSignature 与对话文本一起返回
+                  // 这是推理结束标记,可能出现在两种场景:
+                  // 场景A: 之前有thought:true的part,这个part标记推理结束
+                  // 场景B: 没有显式thinking内容,但有thoughtSignature(如简单回复"你好")
                   else if ('thoughtSignature' in part && 'text' in part && !('thought' in part)) {
+                    console.log('[DEBUG] 🔑 Found thoughtSignature without thought marker');
                     const geminiSignature = (part as any).thoughtSignature;
                     const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-                    if (claudeSignature) {
-                      stateManager.setThinkingSignature(claudeSignature);
-                    }
 
-                    // 结束 thinking 块（如果正在进行）
-                    if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
-                      const thinkingBlockStop: ClaudeStreamEvent = {
-                        type: 'content_block_stop',
-                        index: stateManager.startThinkingBlock()
-                      };
-                      sendEvent('content_block_stop', thinkingBlockStop);
-                      stateManager.stopThinkingBlock();
+                    if (claudeSignature) {
+                      console.log('[DEBUG] 🔑 Signature length:', claudeSignature.length);
+                      stateManager.setThinkingSignature(claudeSignature);
+
+                      // 场景A: 如果之前已经开始了thinking块,需要发送signature并关闭
+                      if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
+                        console.log('[DEBUG] 🔑 Sending signature for existing thinking block');
+                        const signatureDelta: ClaudeStreamEvent = {
+                          type: 'content_block_delta',
+                          index: stateManager.startThinkingBlock(),
+                          delta: {
+                            type: 'signature_delta' as any,
+                            signature: claudeSignature
+                          }
+                        };
+                        sendEvent('content_block_delta', signatureDelta);
+
+                        // 关闭thinking块
+                        const thinkingBlockStop: ClaudeStreamEvent = {
+                          type: 'content_block_stop',
+                          index: stateManager.startThinkingBlock()
+                        };
+                        sendEvent('content_block_stop', thinkingBlockStop);
+                        stateManager.stopThinkingBlock();
+                        console.log('[DEBUG] 🔑 Closed thinking block with signature');
+                      }
+                      // 场景B: 没有thinking块,但有signature(如"你好")
+                      // 根据Claude文档,如果没有thinking内容,不需要创建空的thinking block
+                      // signature只需要保存到stateManager供下次对话使用
+                      else {
+                        console.log('[DEBUG] 🔑 Signature without thinking content, saved to state');
+                      }
                     }
 
                     // 处理文本内容

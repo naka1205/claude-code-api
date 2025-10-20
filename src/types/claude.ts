@@ -233,9 +233,10 @@ export interface ClaudeStreamEvent {
   index?: number;
   content_block?: ClaudeContentBlock;
   delta?: {
-    type: 'text_delta' | 'input_json_delta' | 'thinking_delta';
+    type: 'text_delta' | 'input_json_delta' | 'thinking_delta' | 'signature_delta';
     text?: string;
     thinking?: string;  // Extended thinking 内容delta
+    signature?: string; // Thinking signature (独立事件)
     partial_json?: string;
     stop_reason?: string;
     stop_sequence?: string;

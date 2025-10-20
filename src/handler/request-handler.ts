@@ -339,7 +339,8 @@ export class RequestHandler {
    */
   private getGeminiModel(model: string): string {
     try {
-      return mapModel(model);
+      const modelMapper = ModelMapper.getInstance();
+      return modelMapper.mapModel(model);
     } catch (error) {
       const errorContext = createErrorContext(
         'RequestHandler',
@@ -347,7 +348,7 @@ export class RequestHandler {
         error,
         {
           inputModel: model,
-          availableModels: Object.keys(MODEL_MAPPING).join(', ')
+          availableModels: ModelMapper.getInstance().getSupportedModels?.() || 'unknown'
         }
       );
 
@@ -367,4 +368,4 @@ export class RequestHandler {
   }
 }
 
-import { mapModel, MODEL_MAPPING } from '../models';
+import { ModelMapper } from '../models';

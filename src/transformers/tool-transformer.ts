@@ -38,11 +38,8 @@ export class ToolTransformer {
     let hasOfficialTools = false;
     let hasSpecialTools = false;
 
-    // 过滤掉不常用且容易引起MALFORMED_FUNCTION_CALL的工具
-    const filteredTools = this.filterProblematicTools(claudeTools);
-
     // 检查是否有官方 web_search_20250305 工具
-    const hasOfficialWebSearch = filteredTools.some((t: any) => t.type === 'web_search_20250305');
+    const hasOfficialWebSearch = claudeTools.some((t: any) => t.type === 'web_search_20250305');
 
     if (hasOfficialWebSearch) {
       // 如果有官方搜索工具，只返回google_search
@@ -57,8 +54,7 @@ export class ToolTransformer {
     }
 
     // 转换所有工具，包括Claude官方工具
-    // 作为代理服务，不应该过滤工具，而是忠实转换
-    const convertedTools = filteredTools.map(tool => {
+    const convertedTools = claudeTools.map(tool => {
       // 对于Claude官方工具，转换为适合的格式
       if (tool.type && [
         'bash_20250124',
@@ -92,7 +88,7 @@ export class ToolTransformer {
       functionCount = functionDeclarations.length;
     }
 
-    const isSpecialTool = filteredTools.some(tool =>
+    const isSpecialTool = claudeTools.some(tool =>
       this.isSpecialTool(tool.name) || this.isClaudeOfficialTool(tool)
     );
 
@@ -167,8 +163,7 @@ export class ToolTransformer {
   }
 
   /**
-   * 转换输入schema - 修复版本
-   * 为特定工具(如TodoWrite)增强参数描述,避免MALFORMED_FUNCTION_CALL
+   * 转换输入schema
    */
   static convertInputSchema(claudeSchema: any, toolName?: string): any {
     // 深拷贝后进行递归清理，移除 Gemini 不支持/无效字段，规范结构
@@ -242,31 +237,6 @@ export class ToolTransformer {
 
     try {
       const geminiSchema = sanitize(claudeSchema);
-
-      // 特殊处理TodoWrite工具的activeForm字段
-      // 问题:Gemini误解activeForm语义,返回"true"而非描述性字符串
-      // 修复:明确描述activeForm和content的预期格式
-      if (toolName === 'TodoWrite' && geminiSchema.properties?.todos?.items?.properties) {
-        const todoProps = geminiSchema.properties.todos.items.properties;
-
-        // 增强activeForm描述
-        if (todoProps.activeForm) {
-          todoProps.activeForm.description =
-            'Present continuous form describing the action (e.g., "Creating file", "Running tests", "Analyzing code"). MUST be a descriptive verb phrase in "-ing" form, NOT boolean values like "true" or "false".';
-        }
-
-        // 增强content描述
-        if (todoProps.content) {
-          todoProps.content.description =
-            'Imperative form describing what needs to be done (e.g., "Create file", "Run tests", "Analyze code"). Should be a clear action statement.';
-        }
-
-        // 增强status描述
-        if (todoProps.status && !todoProps.status.description) {
-          todoProps.status.description =
-            'Current status of the task. Use "pending" for not started, "in_progress" for currently working, "completed" for finished.';
-        }
-      }
 
       // 顶层兜底：若不是 object，则包一层 object/parameters
       if (geminiSchema.type !== 'object') {
@@ -424,28 +394,6 @@ export class ToolTransformer {
     }
 
     return { errors, warnings };
-  }
-
-  /**
-   * 过滤掉容易引起MALFORMED_FUNCTION_CALL的工具
-   */
-  static filterProblematicTools(tools: ClaudeTool[]): ClaudeTool[] {
-    const problematicToolNames = [
-      // 'TodoWrite',
-      'NotebookEdit',
-      'SlashCommand',
-      'MultiEdit'
-    ];
-
-    const filtered = tools.filter(tool =>
-      !problematicToolNames.includes(tool.name)
-    );
-
-    if (filtered.length !== tools.length) {
-      console.log(`[ToolTransformer] Filtered out ${tools.length - filtered.length} problematic tools`);
-    }
-
-    return filtered;
   }
 
 }

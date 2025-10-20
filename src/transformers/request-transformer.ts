@@ -20,7 +20,7 @@ import {
   GeminiTool,
   GeminiFunctionDeclaration
 } from '../types/gemini';
-import { mapModel, getModelCapabilities } from '../models';
+import { ModelMapper } from '../models';
 import { ContentTransformer } from './content-transformer';
 import { ToolTransformer } from './tool-transformer';
 import { ThinkingTransformer } from './thinking-transformer';
@@ -72,7 +72,8 @@ export class RequestTransformer {
       this.processClaudeSpecificParams(claudeRequest, warnings);
 
       // 3. 映射模型名称
-      const geminiModel = mapModel(claudeRequest.model);
+      const modelMapper = ModelMapper.getInstance();
+      const geminiModel = modelMapper.mapModel(claudeRequest.model);
 
       // 4. 预处理消息（处理WebSearch工具调用转换）- 恢复自Node.js版本
       const processedMessages = this.preprocessMessages(claudeRequest.messages);
@@ -89,31 +90,17 @@ export class RequestTransformer {
         ThinkingTransformer.modelSupportsThinking(geminiModel);
 
       if (shouldProcessThinking) {
-        // Logger.info('RequestTransformer', 'Processing thinking configuration', {
-        //   thinking: claudeRequest.thinking,
-        //   geminiModel,
-        //   enableThinking: transformOptions.enableThinking,
-        //   modelSupports: ThinkingTransformer.modelSupportsThinking(geminiModel)
-        // });
-
         const thinkingConfig = ThinkingTransformer.transformThinking(
           claudeRequest.thinking,
           geminiModel,
           claudeRequest
         );
 
-        // Logger.info('RequestTransformer', 'Thinking config result', thinkingConfig);
-
         if (thinkingConfig) {
           (generationConfig as any).thinkingConfig = {
             thinkingBudget: thinkingConfig.thinkingBudget,
             includeThoughts: thinkingConfig.includeThoughts
           };
-
-          // Logger.info('RequestTransformer', 'Applied thinking config to generation', {
-          //   thinkingBudget: thinkingConfig.thinkingBudget,
-          //   includeThoughts: thinkingConfig.includeThoughts
-          // });
         }
       }
 
@@ -135,7 +122,6 @@ export class RequestTransformer {
 
           // 记录工具转换警告和错误
           if (toolResult.errors && toolResult.errors.length > 0) {
-            console.warn(`[RequestTransformer] Tool conversion errors: ${toolResult.errors.join(', ')}`);
             warnings.push({
               type: 'warning',
               message: `Tool conversion issues: ${toolResult.errors.length} errors found`,
@@ -145,9 +131,6 @@ export class RequestTransformer {
 
           if (toolResult.tools.length > 0) {
             geminiRequest.tools = toolResult.tools;
-            console.log(`[RequestTransformer] Successfully converted ${toolResult.functionCount} tools`);
-          } else {
-            console.warn('[RequestTransformer] No tools were successfully converted');
           }
 
           // 检测到特殊工具，启用特殊工具处理
@@ -162,7 +145,6 @@ export class RequestTransformer {
             }
           }
         } catch (error) {
-          console.error('[RequestTransformer] Tool conversion failed:', error);
           warnings.push({
             type: 'warning',
             message: `Tool conversion failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -170,11 +152,6 @@ export class RequestTransformer {
           });
           // 继续处理，不让工具转换失败影响整个请求
         }
-      }
-
-      // 增强systemInstruction以明确工具调用格式
-      if (systemInstruction && geminiRequest.tools && geminiRequest.tools.length > 0) {
-        systemInstruction = this.enhanceSystemInstructionForTools(systemInstruction, geminiRequest.tools);
       }
 
       if (systemInstruction) {
@@ -363,117 +340,6 @@ export class RequestTransformer {
   }
 
   /**
-   * 增强系统指令以明确工具调用格式
-   * 解决Gemini将工具调用误解为Python代码的问题
-   */
-  private static enhanceSystemInstructionForTools(
-    systemInstruction: GeminiSystemInstruction,
-    tools: GeminiTool[]
-  ): GeminiSystemInstruction {
-    const originalText = systemInstruction.parts[0].text;
-
-    // 提取工具名称列表
-    const toolNames: string[] = [];
-    tools.forEach(tool => {
-      if (tool.functionDeclarations) {
-        tool.functionDeclarations.forEach((func: GeminiFunctionDeclaration) => {
-          toolNames.push(func.name);
-        });
-      }
-    });
-
-    if (toolNames.length === 0) {
-      return systemInstruction;
-    }
-
-    // 构建工具调用格式说明 - 强化版本
-    const toolInstructions = `
-
-# ⚠️ CRITICAL: Function Calling Protocol
-
-## Available Functions
-${toolNames.join(', ')}
-
-## Mandatory Function Calling Rules
-
-### ❌ NEVER DO THIS:
-1. NEVER generate Python code: print(default_api.FunctionName(...))
-2. NEVER use SDK syntax: default_api.FunctionName() or client.function_name()
-3. NEVER treat function calls as code execution or print statements
-4. NEVER wrap function calls in any programming language syntax
-
-### ✅ ALWAYS DO THIS:
-1. Use the NATIVE Gemini function calling mechanism
-2. Return structured function calls directly through the API interface
-3. Provide pure JSON-compatible parameters only
-
-## Function Call Format Examples
-
-### TodoWrite Function
-CORRECT FORMAT (what Gemini expects):
-{
-  "functionCall": {
-    "name": "TodoWrite",
-    "args": {
-      "todos": [
-        {
-          "content": "Create file",
-          "activeForm": "Creating file",
-          "status": "pending"
-        }
-      ]
-    }
-  }
-}
-
-WRONG FORMAT (will cause MALFORMED_FUNCTION_CALL error):
-❌ print(default_api.TodoWrite(todos=[...]))
-❌ default_api.TodoWrite(todos=[...])
-❌ client.todo_write(todos=[...])
-❌ TodoWrite(todos=[...])
-
-## Parameter Validation Rules
-
-1. **All parameters must be pure JSON types**:
-   - Strings: "text content" (NOT code references)
-   - Numbers: 123 (NOT string numbers like "123")
-   - Booleans: true/false (NOT strings "true"/"false")
-   - Arrays: [...] (NOT Python lists)
-   - Objects: {...} (NOT Python dicts)
-
-2. **TodoWrite specific rules**:
-   - content: Imperative verb phrase (e.g., "Run tests", "Create file", "Fix bug")
-   - activeForm: Present continuous "-ing" form (e.g., "Running tests", "Creating file", "Fixing bug")
-   - status: EXACTLY one of: "pending", "in_progress", "completed"
-
-3. **String values must be descriptive text**:
-   - CORRECT: "Creating authentication module"
-   - WRONG: "true", "false", "None", "undefined"
-
-## Function Calling Mental Model
-
-Think of this as making an API call, NOT writing code:
-- You are the CLIENT sending a structured request
-- The function is executed by the SERVER (not by you)
-- Your output is a DATA structure, NOT executable code
-
-When you decide to use a function:
-1. Identify the function name from the available list
-2. Prepare the parameters as a pure JSON object
-3. Return the function call through Gemini's native mechanism
-4. The execution happens automatically - you don't invoke it
-
-## Critical Reminder
-YOU ARE USING GEMINI'S FUNCTION CALLING API, NOT WRITING PYTHON CODE.
-If you generate any Python-like syntax for function calls, it will be rejected as MALFORMED_FUNCTION_CALL.`;
-
-    return {
-      role: 'system',
-      parts: [{ text: originalText + toolInstructions }]
-    };
-  }
-
-  /**
    * 转换生成配置
    */
   private static transformGenerationConfig(
@@ -481,15 +347,16 @@ If you generate any Python-like syntax for function calls, it will be rejected a
     options: TransformOptions,
     warnings: ValidationWarning[]
   ): GeminiGenerationConfig {
-    const geminiModel = mapModel(claudeRequest.model);
-    const capabilities = getModelCapabilities(geminiModel);
+    const modelMapper = ModelMapper.getInstance();
+    const geminiModel = modelMapper.mapModel(claudeRequest.model);
 
     // 优先级：客户端请求的max_tokens > options中指定的 > 模型推荐默认值
     let requestedMaxTokens = claudeRequest.max_tokens ||
       options.maxOutputTokens ||
-      capabilities.maxTokens;
+      modelMapper.getRecommendedMaxTokens(geminiModel);
 
     // 检查token限制
+    const capabilities = modelMapper.getModelCapabilities(geminiModel);
 
     // 确保不超过模型能力上限
     const finalMaxTokens = Math.min(requestedMaxTokens, capabilities.maxTokens);
