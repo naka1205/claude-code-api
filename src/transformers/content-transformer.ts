@@ -44,9 +44,9 @@ export class ContentTransformer {
   }
 
   /**
-   * 转换单个内容项
+   * 转换单个内容项(公开方法供request-transformer使用)
    */
-  private static async transformContentItem(item: ClaudeContent | any): Promise<GeminiPart | null> {
+  static async transformContentItem(item: ClaudeContent | any): Promise<GeminiPart | null> {
     switch (item.type) {
       case 'text':
         return this.transformTextContent(item as ClaudeTextContent);

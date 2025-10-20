@@ -288,7 +288,9 @@ export class RequestTransformer {
         });
       }
 
-      const parts = await ContentTransformer.transformContent(processedContent);
+      // 🔑 关键修复:处理thinking+signature的情况
+      // 根据Gemini官方格式,signature必须附加到下一个非thinking block上
+      const parts = await this.transformMessagesWithSignature(processedContent);
 
       // 映射角色 - 处理包括tool角色
       let role: GeminiRole;
@@ -317,6 +319,59 @@ export class RequestTransformer {
     }
 
     return contents;
+  }
+
+  /**
+   * 转换消息内容并正确处理thinking+signature
+   * 根据Gemini格式规范,thoughtSignature必须附加到thinking之后的第一个part上
+   */
+  private static async transformMessagesWithSignature(content: string | ClaudeContent[]): Promise<GeminiPart[]> {
+    if (typeof content === 'string') {
+      return [{ text: content }];
+    }
+
+    const parts: GeminiPart[] = [];
+    let pendingSignature: string | undefined;
+
+    for (let i = 0; i < content.length; i++) {
+      const item = content[i];
+
+      // 检查是否是thinking block with signature
+      if ((item as any).type === 'thinking') {
+        const thinkingBlock = item as any;
+        const hasValidSignature =
+          thinkingBlock.signature &&
+          typeof thinkingBlock.signature === 'string' &&
+          thinkingBlock.signature.length > 100;
+
+        if (hasValidSignature) {
+          // 保存signature,稍后附加到下一个非thinking block
+          pendingSignature = thinkingBlock.signature;
+        }
+
+        // 添加thinking part (不包含signature)
+        if (thinkingBlock.thinking) {
+          parts.push({
+            text: thinkingBlock.thinking,
+            thought: true
+          });
+        }
+        continue;
+      }
+
+      // 转换当前item
+      const part = await ContentTransformer.transformContentItem(item);
+      if (part) {
+        // 如果有pending signature,附加到这个part上
+        if (pendingSignature) {
+          (part as any).thoughtSignature = pendingSignature;
+          pendingSignature = undefined;
+        }
+        parts.push(part);
+      }
+    }
+
+    return parts;
   }
 
   /**
