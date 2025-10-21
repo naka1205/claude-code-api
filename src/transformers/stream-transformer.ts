@@ -213,6 +213,23 @@ class StreamStateManager {
       return delta;
     }
 
+    // 🔑 关键修复：检查是否新文本包含了累积文本（累积文本是新文本的前缀）
+    // 这种情况发生在：pendingText被发送后，Gemini在后续chunk中再次发送完整文本
+    if (this.accumulatedText && newText.includes(this.accumulatedText)) {
+      // 找到累积文本在新文本中的位置
+      const startIndex = newText.indexOf(this.accumulatedText);
+      if (startIndex === 0) {
+        // 累积文本在开头，正常累积情况（已在上面处理）
+        const delta = newText.substring(this.accumulatedText.length);
+        this.accumulatedText = newText;
+        return delta;
+      } else {
+        // 累积文本在中间，说明是重复内容，忽略
+        console.log('[DEBUG] 🔄 Detected duplicate text, skipping');
+        return null;
+      }
+    }
+
     // 全新内容 - 直接追加
     const delta = newText;
     this.accumulatedText += newText;
@@ -787,12 +804,12 @@ export class StreamTransformer {
                       }
                     }
 
-                    // 🔑 关键修复：缓存文本内容，不立即发送
-                    // 确保 thinking → tool_use → text 的顺序
-                    // 文本将在处理完所有 tool_use 后发送
+                    // 🔑 关键修复：检查当前chunk是否包含functionCall
+                    // 如果包含functionCall，缓存文本，确保 thinking → tool_use → text 的顺序
+                    // 如果不包含functionCall，也需要缓存，因为文本应该在thinking之后发送
                     const textContent = part.text;
                     if (textContent) {
-                      console.log('[DEBUG] 📝 Caching text content to maintain correct order (thinking → tool_use → text)');
+                      console.log('[DEBUG] 📝 Caching text content with thoughtSignature (hasFunctionCall:', hasFunctionCall, ')');
                       stateManager.setPendingText(textContent);
                     }
                   }
@@ -980,6 +997,36 @@ export class StreamTransformer {
                       }
                     }
                   }
+                }
+              }
+
+              // 🔑 关键修复：在chunk处理完后，如果没有functionCall但有pending文本，立即发送
+              // 这处理了只有 text+thoughtSignature 但没有 functionCall 的场景
+              if (!geminiChunk.candidates?.[0]?.content?.parts?.some(p => 'functionCall' in p) &&
+                  stateManager.hasPendingTextContent()) {
+                console.log('[DEBUG] 📤 Sending pending text after chunk (no functionCall in chunk)');
+                const pendingText = stateManager.getPendingText();
+                const delta = stateManager.processTextDelta(pendingText);
+
+                if (delta) {
+                  // 开始文本块
+                  if (!stateManager.isTextBlockStarted()) {
+                    const textBlockIndex = stateManager.startTextBlock();
+                    const textBlockStart: ClaudeStreamEvent = {
+                      type: 'content_block_start',
+                      index: textBlockIndex,
+                      content_block: { type: 'text', text: '' } as ClaudeTextBlock
+                    };
+                    sendEvent('content_block_start', textBlockStart);
+                  }
+
+                  // 发送文本增量
+                  const textDelta: ClaudeStreamEvent = {
+                    type: 'content_block_delta',
+                    index: stateManager.startTextBlock(),
+                    delta: { type: 'text_delta', text: delta }
+                  };
+                  sendEvent('content_block_delta', textDelta);
                 }
               }
 

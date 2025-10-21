@@ -394,27 +394,33 @@ export class ContentTransformer {
       }
     }
 
-    // 第二轮：处理thinking内容
-    if (thinkingParts.length > 0 && exposeThinkingToClient) {
-      // 合并所有thinking内容为单个block
-      const combinedThinking = thinkingParts.join('\n\n');
+    // 第二轮：处理thinking内容和signature
+    // 🔑 关键修复：即使 exposeThinkingToClient=false，只要有 signature 就必须创建 thinking block
+    // 因为 signature 必须传递给客户端，用于多轮对话
+    const signaturePart = parts.find(p => 'thoughtSignature' in p);
+    const geminiSignature = signaturePart ? (signaturePart as any).thoughtSignature : undefined;
 
-      // 查找thoughtSignature (在最后一个thinking chunk后的part中)
-      const signaturePart = parts.find(p => 'thoughtSignature' in p);
-      const geminiSignature = signaturePart ? (signaturePart as any).thoughtSignature : undefined;
-
-      const thinkingBlock: ClaudeThinkingBlock = {
-        type: 'thinking',
-        thinking: combinedThinking
-      };
-
-      // 只在有有效签名时添加 signature 字段
+    if (geminiSignature) {
+      // 有 signature，必须创建 thinking block（无论 exposeThinkingToClient 如何设置）
       const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
-      if (claudeSignature) {
-        thinkingBlock.signature = claudeSignature;
-      }
 
-      blocks.push(thinkingBlock);
+      if (claudeSignature) {
+        const thinkingBlock: ClaudeThinkingBlock = {
+          type: 'thinking',
+          // exposeThinkingToClient=true 时包含内容，false 时为空
+          thinking: exposeThinkingToClient && thinkingParts.length > 0 ? thinkingParts.join('\n\n') : '',
+          signature: claudeSignature
+        };
+
+        // 🔑 thinking block 必须在最前面（Claude 的标准顺序）
+        blocks.unshift(thinkingBlock);
+      }
+    } else if (thinkingParts.length > 0 && exposeThinkingToClient) {
+      // 只有 thinking 内容但没有 signature（旧版本或特殊情况）
+      blocks.unshift({
+        type: 'thinking',
+        thinking: thinkingParts.join('\n\n')
+      });
     }
 
     // 第三轮：处理普通文本内容
