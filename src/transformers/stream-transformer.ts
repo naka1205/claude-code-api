@@ -60,6 +60,10 @@ class StreamStateManager {
 
   private thinkingSignature: string = '';
 
+  // 🔑 缓存待发送的文本（用于确保 thinking → tool_use → text 的顺序）
+  private pendingTextContent: string = '';
+  private hasPendingText: boolean = false;
+
   private totalInputTokens: number = 0;
   private totalOutputTokens: number = 0;
 
@@ -266,6 +270,37 @@ class StreamStateManager {
    */
   hasToolUse(): boolean {
     return this.processedFunctionCalls.size > 0;
+  }
+
+  /**
+   * 缓存待发送的文本（确保 thinking → tool_use → text 顺序）
+   * 支持累积多个文本片段
+   */
+  setPendingText(text: string): void {
+    if (this.hasPendingText) {
+      // 如果已有缓存，累积文本
+      this.pendingTextContent += text;
+    } else {
+      this.pendingTextContent = text;
+      this.hasPendingText = true;
+    }
+  }
+
+  /**
+   * 检查是否有待发送的文本
+   */
+  hasPendingTextContent(): boolean {
+    return this.hasPendingText;
+  }
+
+  /**
+   * 获取并清空待发送的文本
+   */
+  getPendingText(): string {
+    const text = this.pendingTextContent;
+    this.pendingTextContent = '';
+    this.hasPendingText = false;
+    return text;
   }
 
   /**
@@ -579,6 +614,12 @@ export class StreamTransformer {
 
               // 2. 处理内容块
               if (geminiChunk.candidates?.[0]?.content?.parts) {
+                // 🔑 关键修复：检测当前chunk是否包含functionCall
+                // 如果有functionCall，所有text都应该缓存，在tool_use之后发送
+                const hasFunctionCall = geminiChunk.candidates[0].content.parts.some(
+                  p => 'functionCall' in p
+                );
+
                 for (const part of geminiChunk.candidates[0].content.parts) {
 
                   // 2.1 处理 thinking 内容
@@ -650,23 +691,57 @@ export class StreamTransformer {
                         stateManager.stopThinkingBlock();
                       }
                     } else {
-                      // exposeThinkingToClient = false，但需要检查签名以结束 thinking 阶段
+                      // exposeThinkingToClient = false
+                      // 🔑 关键：Gemini Pro无法禁用推理，模型内部仍在推理
+                      // 需要创建空的thinking block来"模拟"被隐藏的推理过程，并发送signature
                       if ('thoughtSignature' in part) {
                         const geminiSignature = (part as any).thoughtSignature;
                         const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                         if (claudeSignature) {
                           stateManager.setThinkingSignature(claudeSignature);
+
+                          // 创建空的thinking block（模拟被隐藏的推理过程）
+                          if (!stateManager.isThinkingBlockStarted()) {
+                            const blockIndex = stateManager.startThinkingBlock();
+                            const thinkingBlockStart: ClaudeStreamEvent = {
+                              type: 'content_block_start',
+                              index: blockIndex,
+                              content_block: {
+                                type: 'thinking',
+                                thinking: '' // 空内容，因为推理被隐藏
+                              } as ClaudeThinkingBlock
+                            };
+                            sendEvent('content_block_start', thinkingBlockStart);
+                          }
+
+                          // 发送signature来正确结束thinking
+                          const signatureDelta: ClaudeStreamEvent = {
+                            type: 'content_block_delta',
+                            index: stateManager.startThinkingBlock(),
+                            delta: {
+                              type: 'signature_delta' as any,
+                              signature: claudeSignature
+                            }
+                          };
+                          sendEvent('content_block_delta', signatureDelta);
+
+                          // 结束thinking块
+                          const thinkingBlockStop: ClaudeStreamEvent = {
+                            type: 'content_block_stop',
+                            index: stateManager.startThinkingBlock()
+                          };
+                          sendEvent('content_block_stop', thinkingBlockStop);
+                          stateManager.stopThinkingBlock();
                         }
                       }
                     }
                   }
 
                   // 2.2 处理包含 thoughtSignature 但无 thought 标记的文本
-                  // 这是推理结束标记,可能出现在两种场景:
-                  // 场景A: 之前有thought:true的part,这个part标记推理结束
-                  // 场景B: 没有显式thinking内容,但有thoughtSignature(如简单回复"你好")
+                  // 这是 includeThoughts=false 时的推理结束标记
+                  // Gemini将signature附加在推理后的第一个part上
                   else if ('thoughtSignature' in part && 'text' in part && !('thought' in part)) {
-                    console.log('[DEBUG] 🔑 Found thoughtSignature without thought marker');
+                    console.log('[DEBUG] 🔑 Found thoughtSignature without thought marker, exposeToClient:', exposeThinkingToClient);
                     const geminiSignature = (part as any).thoughtSignature;
                     const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
 
@@ -674,9 +749,23 @@ export class StreamTransformer {
                       console.log('[DEBUG] 🔑 Signature length:', claudeSignature.length);
                       stateManager.setThinkingSignature(claudeSignature);
 
-                      // 场景A: 如果之前已经开始了thinking块,需要发送signature并关闭
-                      if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
-                        console.log('[DEBUG] 🔑 Sending signature for existing thinking block');
+                      // 如果禁用推理，创建空thinking block来传递signature
+                      if (!exposeThinkingToClient && !stateManager.isThinkingBlockStarted()) {
+                        const blockIndex = stateManager.startThinkingBlock();
+                        const thinkingBlockStart: ClaudeStreamEvent = {
+                          type: 'content_block_start',
+                          index: blockIndex,
+                          content_block: {
+                            type: 'thinking',
+                            thinking: ''
+                          } as ClaudeThinkingBlock
+                        };
+                        sendEvent('content_block_start', thinkingBlockStart);
+                      }
+
+                      // 如果thinking块已开始，发送signature并关闭
+                      if (stateManager.isThinkingBlockStarted()) {
+                        console.log('[DEBUG] 🔑 Sending signature for thinking block');
                         const signatureDelta: ClaudeStreamEvent = {
                           type: 'content_block_delta',
                           index: stateManager.startThinkingBlock(),
@@ -696,42 +785,30 @@ export class StreamTransformer {
                         stateManager.stopThinkingBlock();
                         console.log('[DEBUG] 🔑 Closed thinking block with signature');
                       }
-                      // 场景B: 没有thinking块,但有signature(如"你好")
-                      // 根据Claude文档,如果没有thinking内容,不需要创建空的thinking block
-                      // signature只需要保存到stateManager供下次对话使用
-                      else {
-                        console.log('[DEBUG] 🔑 Signature without thinking content, saved to state');
-                      }
                     }
 
-                    // 处理文本内容
+                    // 🔑 关键修复：缓存文本内容，不立即发送
+                    // 确保 thinking → tool_use → text 的顺序
+                    // 文本将在处理完所有 tool_use 后发送
                     const textContent = part.text;
-                    const delta = stateManager.processTextDelta(textContent);
-                    if (delta) {
-                      // 开始文本块
-                      if (!stateManager.isTextBlockStarted()) {
-                        const blockIndex = stateManager.startTextBlock();
-                        const textBlockStart: ClaudeStreamEvent = {
-                          type: 'content_block_start',
-                          index: blockIndex,
-                          content_block: { type: 'text', text: '' } as ClaudeTextBlock
-                        };
-                        sendEvent('content_block_start', textBlockStart);
-                      }
-
-                      // 发送文本增量
-                      const textDelta: ClaudeStreamEvent = {
-                        type: 'content_block_delta',
-                        index: stateManager.startTextBlock(),
-                        delta: { type: 'text_delta', text: delta }
-                      };
-                      sendEvent('content_block_delta', textDelta);
+                    if (textContent) {
+                      console.log('[DEBUG] 📝 Caching text content to maintain correct order (thinking → tool_use → text)');
+                      stateManager.setPendingText(textContent);
                     }
                   }
 
                   // 2.3 处理普通文本（无 thought 标记，无 functionCall）
                   else if ('text' in part && part.text && !('thought' in part) && !('functionCall' in part)) {
                     const textContent = part.text;
+
+                    // 🔑 关键修复：如果当前chunk包含functionCall，缓存所有text
+                    // 确保 thinking → tool_use → text 的正确顺序
+                    if (hasFunctionCall) {
+                      console.log('[DEBUG] 📝 Caching plain text (chunk has functionCall)');
+                      stateManager.setPendingText(textContent);
+                      continue; // 跳过立即发送
+                    }
+
                     const delta = stateManager.processTextDelta(textContent);
 
                     if (delta) {
@@ -780,16 +857,41 @@ export class StreamTransformer {
                       const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                       if (claudeSignature) {
                         stateManager.setThinkingSignature(claudeSignature);
-                      }
 
-                      // 结束 thinking 块
-                      if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
-                        const thinkingBlockStop: ClaudeStreamEvent = {
-                          type: 'content_block_stop',
-                          index: stateManager.startThinkingBlock()
-                        };
-                        sendEvent('content_block_stop', thinkingBlockStop);
-                        stateManager.stopThinkingBlock();
+                        // 如果禁用推理但还没有thinking块，创建空块来传递signature
+                        if (!exposeThinkingToClient && !stateManager.isThinkingBlockStarted()) {
+                          const blockIndex = stateManager.startThinkingBlock();
+                          const thinkingBlockStart: ClaudeStreamEvent = {
+                            type: 'content_block_start',
+                            index: blockIndex,
+                            content_block: {
+                              type: 'thinking',
+                              thinking: ''
+                            } as ClaudeThinkingBlock
+                          };
+                          sendEvent('content_block_start', thinkingBlockStart);
+
+                          // 发送signature
+                          const signatureDelta: ClaudeStreamEvent = {
+                            type: 'content_block_delta',
+                            index: stateManager.startThinkingBlock(),
+                            delta: {
+                              type: 'signature_delta' as any,
+                              signature: claudeSignature
+                            }
+                          };
+                          sendEvent('content_block_delta', signatureDelta);
+                        }
+
+                        // 结束 thinking 块
+                        if (stateManager.isThinkingBlockStarted()) {
+                          const thinkingBlockStop: ClaudeStreamEvent = {
+                            type: 'content_block_stop',
+                            index: stateManager.startThinkingBlock()
+                          };
+                          sendEvent('content_block_stop', thinkingBlockStop);
+                          stateManager.stopThinkingBlock();
+                        }
                       }
                     }
 
@@ -848,6 +950,35 @@ export class StreamTransformer {
                       index: blockIndex
                     };
                     sendEvent('content_block_stop', toolUseStop);
+
+                    // 🔑 关键修复：在tool_use之后，发送缓存的文本（如果有）
+                    // 确保 thinking → tool_use → text 的正确顺序
+                    if (stateManager.hasPendingTextContent()) {
+                      console.log('[DEBUG] 📤 Sending pending text after tool_use');
+                      const pendingText = stateManager.getPendingText();
+                      const delta = stateManager.processTextDelta(pendingText);
+
+                      if (delta) {
+                        // 开始文本块
+                        if (!stateManager.isTextBlockStarted()) {
+                          const textBlockIndex = stateManager.startTextBlock();
+                          const textBlockStart: ClaudeStreamEvent = {
+                            type: 'content_block_start',
+                            index: textBlockIndex,
+                            content_block: { type: 'text', text: '' } as ClaudeTextBlock
+                          };
+                          sendEvent('content_block_start', textBlockStart);
+                        }
+
+                        // 发送文本增量
+                        const textDelta: ClaudeStreamEvent = {
+                          type: 'content_block_delta',
+                          index: stateManager.startTextBlock(),
+                          delta: { type: 'text_delta', text: delta }
+                        };
+                        sendEvent('content_block_delta', textDelta);
+                      }
+                    }
                   }
                 }
               }
@@ -855,6 +986,35 @@ export class StreamTransformer {
               // 3. 处理 finishReason（流完成）
               if (geminiChunk.candidates?.[0]?.finishReason && !stateManager.isCompleted()) {
                 const candidate = geminiChunk.candidates[0];
+
+                // 🔑 关键修复：在结束前，发送缓存的文本（如果有且没有tool_use）
+                // 处理没有tool_use的场景
+                if (stateManager.hasPendingTextContent() && !stateManager.hasToolUse()) {
+                  console.log('[DEBUG] 📤 Sending pending text before finish (no tool_use case)');
+                  const pendingText = stateManager.getPendingText();
+                  const delta = stateManager.processTextDelta(pendingText);
+
+                  if (delta) {
+                    // 开始文本块
+                    if (!stateManager.isTextBlockStarted()) {
+                      const textBlockIndex = stateManager.startTextBlock();
+                      const textBlockStart: ClaudeStreamEvent = {
+                        type: 'content_block_start',
+                        index: textBlockIndex,
+                        content_block: { type: 'text', text: '' } as ClaudeTextBlock
+                      };
+                      sendEvent('content_block_start', textBlockStart);
+                    }
+
+                    // 发送文本增量
+                    const textDelta: ClaudeStreamEvent = {
+                      type: 'content_block_delta',
+                      index: stateManager.startTextBlock(),
+                      delta: { type: 'text_delta', text: delta }
+                    };
+                    sendEvent('content_block_delta', textDelta);
+                  }
+                }
 
                 // 结束所有未结束的块
                 if (stateManager.isThinkingBlockStarted() && exposeThinkingToClient) {
