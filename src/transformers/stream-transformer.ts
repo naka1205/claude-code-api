@@ -547,17 +547,26 @@ export class StreamTransformer {
    * @param claudeModel Claude模型名称
    * @param exposeThinkingToClient 是否向客户端暴露thinking内容
    * @param requestId 请求ID（用于日志）
+   * @param geminiModel Gemini模型名称（用于判断是否会返回signature）
+   * @param thinkingBudget thinking预算配置（用于判断是否会返回signature）
    */
   static createClaudeStreamTransformer(
     claudeModel: string,
     exposeThinkingToClient: boolean = false,
-    requestId?: string
+    requestId?: string,
+    geminiModel?: string,
+    thinkingBudget?: number
   ): TransformStream<Uint8Array, Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let buffer = '';
     const messageId = this.generateClaudeMessageId();
     const stateManager = new StreamStateManager();
+
+    // 判断当前配置下模型是否会返回signature
+    const willReturnSignature = geminiModel && thinkingBudget !== undefined
+      ? ThinkingTransformer.willReturnSignature(geminiModel, thinkingBudget)
+      : true; // 默认假设会返回signature（兼容旧代码）
 
     return new TransformStream({
       async transform(chunk, controller) {
@@ -711,7 +720,8 @@ export class StreamTransformer {
                       // exposeThinkingToClient = false
                       // 🔑 关键：Gemini Pro无法禁用推理，模型内部仍在推理
                       // 需要创建空的thinking block来"模拟"被隐藏的推理过程，并发送signature
-                      if ('thoughtSignature' in part) {
+                      // 🔑 修复：只有在模型会返回signature时才处理
+                      if (willReturnSignature && 'thoughtSignature' in part) {
                         const geminiSignature = (part as any).thoughtSignature;
                         const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                         if (claudeSignature) {
@@ -757,7 +767,8 @@ export class StreamTransformer {
                   // 2.2 处理包含 thoughtSignature 但无 thought 标记的文本
                   // 这是 includeThoughts=false 时的推理结束标记
                   // Gemini将signature附加在推理后的第一个part上
-                  else if ('thoughtSignature' in part && 'text' in part && !('thought' in part)) {
+                  // 🔑 关键修复：只有在模型会返回signature时才处理
+                  else if (willReturnSignature && 'thoughtSignature' in part && 'text' in part && !('thought' in part)) {
                     console.log('[DEBUG] 🔑 Found thoughtSignature without thought marker, exposeToClient:', exposeThinkingToClient);
                     const geminiSignature = (part as any).thoughtSignature;
                     const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
@@ -869,7 +880,8 @@ export class StreamTransformer {
                     stateManager.markFunctionCallProcessed(part.functionCall);
 
                     // 检查是否包含 thoughtSignature（工具调用 + signature）
-                    if ('thoughtSignature' in part) {
+                    // 🔑 修复：只有在模型会返回signature时才处理
+                    if (willReturnSignature && 'thoughtSignature' in part) {
                       const geminiSignature = (part as any).thoughtSignature;
                       const claudeSignature = ThinkingTransformer.convertGeminiSignatureToClaudeFormat(geminiSignature);
                       if (claudeSignature) {
@@ -1204,10 +1216,12 @@ export class StreamTransformer {
     geminiStream: ReadableStream,
     claudeModel: string,
     exposeThinkingToClient: boolean = false,
-    requestId?: string
+    requestId?: string,
+    geminiModel?: string,
+    thinkingBudget?: number
   ): ReadableStream {
     return geminiStream.pipeThrough(
-      this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, requestId)
+      this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, requestId, geminiModel, thinkingBudget)
     );
   }
 }

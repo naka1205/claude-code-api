@@ -109,6 +109,10 @@ export class ThinkingTransformer {
       };
     }
 
+    if (limits.canDisable) {
+      limits.min = 0
+    }
+
     return {
       thinkingBudget: limits.min,
       includeThoughts: false,  // ← 内部推理，不返回文本
@@ -295,6 +299,25 @@ export class ThinkingTransformer {
       errors,
       warnings
     };
+  }
+
+  /**
+   * 判断模型在当前配置下是否会返回signature
+   * @param geminiModel Gemini模型名称
+   * @param thinkingBudget thinking预算配置
+   * @returns true表示会返回signature，false表示不会
+   */
+  static willReturnSignature(geminiModel: string, thinkingBudget: number): boolean {
+    const limits = this.THINKING_LIMITS[geminiModel];
+    if (!limits) return false;
+
+    // 如果模型可以禁用推理，且budget设为0，则不会返回signature
+    if (limits.canDisable && thinkingBudget === 0) {
+      return false;
+    }
+
+    // 其他情况（PRO模型或启用推理）都会返回signature
+    return true;
   }
 
   /**

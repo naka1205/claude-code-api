@@ -93,6 +93,7 @@ export class RequestHandler {
       await KeyUsageCache.reserve(selectedKey);
 
       let exposeThinkingToClient = false;
+      let thinkingBudget: number | undefined = undefined;
 
       if ((claudeRequest as any).thinking && (claudeRequest as any).thinking.type === 'enabled') {
         const thinkingConfig = ThinkingTransformer.transformThinking(
@@ -101,8 +102,16 @@ export class RequestHandler {
           claudeRequest
         );
         exposeThinkingToClient = thinkingConfig?.exposeToClient || false;
+        thinkingBudget = thinkingConfig?.thinkingBudget;
 
       } else {
+        // 未启用thinking时，使用默认配置（模型可能仍会内部推理）
+        const defaultConfig = ThinkingTransformer.transformThinking(
+          undefined,
+          geminiModel,
+          claudeRequest
+        );
+        thinkingBudget = defaultConfig?.thinkingBudget;
       }
 
       // 4. 转换请求
@@ -146,7 +155,9 @@ export class RequestHandler {
               claudeRequest.model,
               streamResponse.headers,
               exposeThinkingToClient,
-              requestId
+              requestId,
+              geminiModel,
+              thinkingBudget
             );
           } else {
             // 非流式错误响应 - 直接转换错误格式返回

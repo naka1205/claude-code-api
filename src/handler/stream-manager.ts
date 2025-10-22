@@ -14,7 +14,9 @@ export class StreamManager {
     claudeModel: string,
     headers: Record<string, string>,
     exposeThinkingToClient: boolean = false,
-    requestId?: string
+    requestId?: string,
+    geminiModel?: string,
+    thinkingBudget?: number
   ): Response {
     try {
       // 创建转换后的流
@@ -22,7 +24,9 @@ export class StreamManager {
         stream,
         claudeModel,
         exposeThinkingToClient,
-        requestId
+        requestId,
+        geminiModel,
+        thinkingBudget
       );
 
       // 返回SSE响应
