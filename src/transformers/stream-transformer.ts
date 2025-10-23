@@ -887,8 +887,31 @@ export class StreamTransformer {
                       if (claudeSignature) {
                         stateManager.setThinkingSignature(claudeSignature);
 
-                        // 如果禁用推理但还没有thinking块，创建空块来传递signature
-                        if (!exposeThinkingToClient && !stateManager.isThinkingBlockStarted()) {
+                        // 🔧 修复：根据thinking block状态分别处理，确保signature始终被发送
+                        if (stateManager.isThinkingBlockStarted()) {
+                          // 场景1: thinking block已开始（exposeThinkingToClient=true的情况）
+                          // 这种情况下前面已经发送了thinking内容，现在需要发送signature并关闭
+                          console.log('[DEBUG] 🔑 Sending signature for existing thinking block (functionCall+signature)');
+                          const signatureDelta: ClaudeStreamEvent = {
+                            type: 'content_block_delta',
+                            index: stateManager.startThinkingBlock(),
+                            delta: {
+                              type: 'signature_delta' as any,
+                              signature: claudeSignature
+                            }
+                          };
+                          sendEvent('content_block_delta', signatureDelta);
+
+                          const thinkingBlockStop: ClaudeStreamEvent = {
+                            type: 'content_block_stop',
+                            index: stateManager.startThinkingBlock()
+                          };
+                          sendEvent('content_block_stop', thinkingBlockStop);
+                          stateManager.stopThinkingBlock();
+                        } else if (!exposeThinkingToClient) {
+                          // 场景2: thinking block未开始且禁用推理（includeThoughts=false）
+                          // 创建空thinking block，发送signature，然后关闭
+                          console.log('[DEBUG] 🔑 Creating empty thinking block for signature (functionCall+signature)');
                           const blockIndex = stateManager.startThinkingBlock();
                           const thinkingBlockStart: ClaudeStreamEvent = {
                             type: 'content_block_start',
@@ -900,23 +923,19 @@ export class StreamTransformer {
                           };
                           sendEvent('content_block_start', thinkingBlockStart);
 
-                          // 发送signature
                           const signatureDelta: ClaudeStreamEvent = {
                             type: 'content_block_delta',
-                            index: stateManager.startThinkingBlock(),
+                            index: blockIndex,
                             delta: {
                               type: 'signature_delta' as any,
                               signature: claudeSignature
                             }
                           };
                           sendEvent('content_block_delta', signatureDelta);
-                        }
 
-                        // 结束 thinking 块
-                        if (stateManager.isThinkingBlockStarted()) {
                           const thinkingBlockStop: ClaudeStreamEvent = {
                             type: 'content_block_stop',
-                            index: stateManager.startThinkingBlock()
+                            index: blockIndex
                           };
                           sendEvent('content_block_stop', thinkingBlockStop);
                           stateManager.stopThinkingBlock();
