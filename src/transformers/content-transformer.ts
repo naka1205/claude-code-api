@@ -313,10 +313,14 @@ export class ContentTransformer {
 
     // 收集所有thinking内容，合并为单个block
     const thinkingParts: string[] = [];
-    const textParts: string[] = [];
 
-    // 第一轮：按照Gemini的标记分类内容
-    for (const part of parts) {
+    // 🔑 关键修复：使用数组记录part的类型和内容，保持原始顺序
+    const orderedContent: Array<{ type: 'text' | 'tool_use', data: any, partIndex: number }> = [];
+
+    // 第一轮：按照Gemini parts的原始顺序处理内容
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+
       // 处理标记为thought的内容 (不包括仅有thoughtSignature的part)
       // thoughtSignature单独出现时表示thinking阶段结束,不是thinking内容本身
       if ('thought' in part && 'text' in part && (part as any).thought === true && (part as any).text) {
@@ -350,17 +354,26 @@ export class ContentTransformer {
           toolCallMap.set(extractedCall.name + '_' + toolUseId, toolUseId);
           this.functionCallMap.set(toolUseId, extractedCall.name);
 
-          blocks.push({
+          orderedContent.push({
             type: 'tool_use',
-            id: toolUseId,
-            name: extractedCall.name,
-            input: extractedCall.args || {}
-          } as any);
+            partIndex: i,
+            data: {
+              type: 'tool_use',
+              id: toolUseId,
+              name: extractedCall.name,
+              input: extractedCall.args || {}
+            }
+          });
 
           continue;
         }
 
-        textParts.push(part.text);
+        // 记录文本内容及其位置
+        orderedContent.push({
+          type: 'text',
+          partIndex: i,
+          data: part.text
+        });
         continue;
       }
 
@@ -385,12 +398,16 @@ export class ContentTransformer {
         toolCallMap.set(part.functionCall.name + '_' + toolUseId, toolUseId);
         this.functionCallMap.set(toolUseId, part.functionCall.name);
 
-        blocks.push({
+        orderedContent.push({
           type: 'tool_use',
-          id: toolUseId,
-          name: part.functionCall.name,
-          input: part.functionCall.args || {}
-        } as any);
+          partIndex: i,
+          data: {
+            type: 'tool_use',
+            id: toolUseId,
+            name: part.functionCall.name,
+            input: part.functionCall.args || {}
+          }
+        });
       }
     }
 
@@ -413,22 +430,43 @@ export class ContentTransformer {
         };
 
         // 🔑 thinking block 必须在最前面（Claude 的标准顺序）
-        blocks.unshift(thinkingBlock);
+        blocks.push(thinkingBlock);
       }
     } else if (thinkingParts.length > 0 && exposeThinkingToClient) {
       // 只有 thinking 内容但没有 signature（旧版本或特殊情况）
-      blocks.unshift({
+      blocks.push({
         type: 'thinking',
         thinking: thinkingParts.join('\n\n')
       });
     }
 
-    // 第三轮：处理普通文本内容
-    if (textParts.length > 0) {
-      const combinedText = textParts.join('\n\n');
+    // 第三轮：按照原始顺序处理文本和工具调用
+    // 🔑 关键修复：保持 Gemini 原始的 text → tool_use 顺序
+    // 合并连续的文本块
+    let currentTextParts: string[] = [];
+
+    for (const item of orderedContent) {
+      if (item.type === 'text') {
+        currentTextParts.push(item.data);
+      } else if (item.type === 'tool_use') {
+        // 在遇到tool_use前，先输出累积的文本
+        if (currentTextParts.length > 0) {
+          blocks.push({
+            type: 'text',
+            text: currentTextParts.join('\n\n')
+          });
+          currentTextParts = [];
+        }
+        // 然后输出tool_use
+        blocks.push(item.data);
+      }
+    }
+
+    // 处理最后剩余的文本
+    if (currentTextParts.length > 0) {
       blocks.push({
         type: 'text',
-        text: combinedText
+        text: currentTextParts.join('\n\n')
       });
     }
 
