@@ -27,7 +27,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data '
 {
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6-20260217",
   "max_tokens": 512,
   "tools": [
     { "type": "bash_20250124", "name": "bash" }
@@ -86,7 +86,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data '
 {
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6-20260217",
   "max_tokens": 512,
   "tools": [
     { "type": "code_execution_20250124", "name": "code_executor" }
@@ -151,7 +151,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data '
 {
-  "model": "claude-opus-4-20250514",
+  "model": "claude-opus-4-6-20260205",
   "max_tokens": 512,
   "tools": [
     { "type": "text_editor_20250429", "name": "editor" }
@@ -214,7 +214,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data '
 {
-  "model": "claude-opus-4-1-20250805",
+  "model": "claude-opus-4-6-20260205",
   "max_tokens": 1024,
   "messages": [
     {"role": "user", "content": "What's new in TypeScript 5.5? Please include sources."}
@@ -250,7 +250,7 @@ curl https://api.anthropic.com/v1/messages \
      --header "content-type: application/json" \
      --data '
 {
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6-20260217",
   "max_tokens": 512,
   "tools": [
     { "type": "computer_use_20250124", "name": "computer" }
@@ -543,4 +543,4 @@ Todos
 **官方文档**: https://docs.anthropic.com/en/api/messages
 **示例代码**: https://docs.anthropic.com/en/api/messages-examples
 
-**最后更新**: 2025年1月
+**最后更新**: 2026年3月

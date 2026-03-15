@@ -212,7 +212,7 @@ client = anthropic.Anthropic(
 )
 
 message = client.beta.messages.create(
-    model="claude-3-sonnet-20240229",
+    model="claude-sonnet-4-6-20260217",
     max_tokens=1000,
     betas=["web-fetch-2025-09-10", "computer-use-2025-01-24"],
     messages=[
@@ -230,7 +230,7 @@ const anthropic = new Anthropic({
 });
 
 const message = await anthropic.beta.messages.create({
-  model: 'claude-3-sonnet-20240229',
+  model: 'claude-sonnet-4-6-20260217',
   max_tokens: 1000,
   betas: ['web-fetch-2025-09-10', 'computer-use-2025-01-24'],
   messages: [

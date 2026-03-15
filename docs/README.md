@@ -11,7 +11,7 @@
 
 - [基本配置](#基本配置)
 - [Gemini API 核心功能](#gemini-api-核心功能)
-- [思考预算配置](#思考预算配置)
+- [思考深度配置](#思考深度配置)
 - [UsageMetadata 对象详解](#usagemetadata-对象详解)
 - [Claude 流式输出场景](#claude-流式输出场景)
 
@@ -26,12 +26,12 @@
 **重要提示**：根据 [Gemini API 速率限制文档](https://ai.google.dev/gemini-api/docs/rate-limits)，不同模型和层级有不同的限制：
 
 ### 免费层限制（每个API密钥）
-- **Gemini 2.5 Pro**：5 RPM, 250K TPM, 100 RPD
-- **Gemini 2.5 Flash**：10 RPM, 250K TPM, 250 RPD
-- **Gemini 2.5 Flash-Lite**：15 RPM, 250K TPM, 1K RPD
+- **Gemini 3.1 Pro**：5 RPM, 250K TPM, 100 RPD
+- **Gemini 3 Flash**：10 RPM, 250K TPM, 250 RPD
+- **Gemini 3.1 Flash-Lite**：15 RPM, 250K TPM, 1K RPD
 - **Gemini 2.0 Flash**：15 RPM, 1M TPM, 200 RPD
 
-使用多个API密钥可以有效提升总体请求限制。例如，3个免费密钥可以将Gemini 2.5 Flash的限制提升到30 RPM。
+使用多个API密钥可以有效提升总体请求限制。例如，3个免费密钥可以将Gemini 3 Flash的限制提升到30 RPM。
 
 ---
 
@@ -59,7 +59,7 @@
 
 **功能**: 深度推理和思考，提升复杂任务处理能力
 
-**支持模型**: Gemini 2.5 Pro、Flash、Flash-Lite
+**支持模型**: Gemini 3.1 Pro、3 Flash、3.1 Flash-Lite
 
 **核心能力**:
 - **思维预算配置**: 设置具体 token 预算（如 1024）精确控制，或设为 -1 启用动态思维
@@ -112,6 +112,7 @@
 **高级能力**:
 - 并行函数调用（同时执行多个独立函数）
 - 组合函数调用（链式调用，前一个输出作为后一个输入）
+- **Computer Use 工具支持**: 允许模型直接通过原生计算机使用工具控制计算机（模拟鼠标/键盘、屏幕读取等自动化任务）（2026年3月新特性）。
 
 **调用模式**:
 - AUTO（默认）: 模型自主决定是否调用
@@ -155,7 +156,7 @@
 
 ### 6. Gemini 模型系列对比
 
-#### Gemini 2.5 Pro vs Flash 核心差异
+#### Gemini 3.1 Pro vs Flash 核心差异
 
 | 特性 | Pro | Flash |
 |------|-----|-------|
@@ -180,18 +181,18 @@
 
 ---
 
-## 思考预算配置
+## 思考深度配置
 
 ### 支持的模型与映射
 
 | Claude模型 | Gemini模型 | 功能特性 | 上下文窗口 | 免费层RPM |
 |------------|------------|----------|------------|-----------|
-| claude-opus-4-1-20250805 | gemini-2.5-pro | 视觉、工具、高级性能 | 2M tokens | 5 |
-| claude-opus-4-20250514 | gemini-2.5-pro | 视觉、工具、高级性能 | 2M tokens | 5 |
-| claude-sonnet-4-20250514 | gemini-2.5-flash | 视觉、工具、高性能 | 1M tokens | 10 |
-| claude-3-7-sonnet-20250219 | gemini-2.5-flash | 视觉、工具、高性能 | 1M tokens | 10 |
-| claude-3-5-sonnet-20241022 | gemini-2.5-flash-lite | 视觉、工具、快速高效 | 1M tokens | 15 |
-| claude-3-5-haiku-20241022 | gemini-2.0-flash | 视觉、工具、快速 | 1M tokens | 30 |
+| claude-opus-4-6-20260205 | gemini-3.1-pro | 视觉、工具、高级性能 | 2M tokens | 5 |
+| claude-opus-4-6-20260205 | gemini-3.1-pro | 视觉、工具、高级性能 | 2M tokens | 5 |
+| claude-sonnet-4-6-20260217 | gemini-3-flash | 视觉、工具、高性能 | 1M tokens | 10 |
+| claude-sonnet-4-6-20260217 | gemini-3-flash | 视觉、工具、高性能 | 1M tokens | 10 |
+| claude-sonnet-4-6-20260217 | gemini-3.1-flash-lite | 视觉、工具、快速高效 | 1M tokens | 15 |
+| claude-haiku-4-5 | gemini-3-flash | 视觉、工具、快速 | 1M tokens | 30 |
 
 ### 模型能力
 
@@ -207,25 +208,25 @@
 
 ### 函数调用支持的模型
 
-依据官方文档关于函数调用（Function Calling）的说明，当前支持情况如下（最后更新：2025-08-21）：
+依据官方文档关于函数调用（Function Calling）的说明，当前支持情况如下（最后更新：2026-03）：
 
 | 模型 | 函数调用 | 并行函数调用 | 组合式函数调用 |
 |------|----------|--------------|----------------|
-| Gemini 2.5 Pro | ✔️ | ✔️ | ✔️ |
-| Gemini 2.5 Flash | ✔️ | ✔️ | ✔️ |
-| Gemini 2.5 Flash-Lite | ✔️ | ✔️ | ✔️ |
-| Gemini 2.0 Flash | ✔️ | ✔️ | ✔️ |
-| Gemini 2.0 Flash-Lite | ❌ | ❌ | ❌ |
+| Gemini 3.1 Pro | ✔️ | ✔️ | ✔️ |
+| Gemini 3 Flash | ✔️ | ✔️ | ✔️ |
+| Gemini 3.1 Flash-Lite | ✔️ | ✔️ | ✔️ |
+| Gemini 3 Deep Think | ✔️ | ❌ | ❌ |
+| Gemini Embedding 2 | ❌ | ❌ | ❌ |
 
 参考来源：[`Function calling with the Gemini API`](https://ai.google.dev/gemini-api/docs/function-calling)
 
 ### URL上下文（URL Context）支持的模型
 
-根据官方“URL context”文档（最后更新：2025-08-21）当前支持以下模型：
+根据官方“URL context”文档（最后更新：2026-03）当前支持以下模型：
 
-- gemini-2.5-pro
-- gemini-2.5-flash
-- gemini-2.5-flash-lite
+- gemini-3.1-pro
+- gemini-3-flash
+- gemini-3.1-flash-lite
 
 参考来源：[`URL context`](https://ai.google.dev/gemini-api/docs/url-context)
 
@@ -233,32 +234,32 @@
 
 基于官方“Thinking”文档，支持思考推理能力的主要模型包括：
 
-- gemini-2.5-pro
-- gemini-2.5-flash
-- gemini-2.5-flash-lite
+- gemini-3.1-pro
+- gemini-3-flash
+- gemini-3.1-flash-lite
 
 注：具体能力、定价与限制以官方文档为准，后续可能更新。
 
 参考来源：[`Thinking`](https://ai.google.dev/gemini-api/docs/thinking)
 
 
-## 思考预算（Thinking）
+## 思考深度（Thinking Level）
 
-### 模型与预算范围（官方要点）
+### 模型与深度控制（官方要点）
 
-- 2.5 Pro：默认动态思考；范围 128–32768；无法禁用；动态 `-1`
-- 2.5 Flash：默认动态思考；范围 0–24576；禁用 `0`；动态 `-1`
-- 2.5 Flash-Lite：默认不思考；范围 512–24576；禁用 `0`；动态 `-1`
+- 3.1 Pro：支持 `high`、`medium`、`low`，默认为 `medium`。
+- 3 Flash：支持 `high`、`medium`、`low`，默认为 `medium`；可以关闭思考过程。
+- 3.1 Flash-Lite：默认不思考，可通过设置 `thinking_level` 启用。
 
 参考：[`Thinking`](https://ai.google.dev/gemini-api/docs/thinking)
 
-> 实际可用范围可能因提示而溢出/欠用，请以官方文档为准。
+> 实际推理深度可能因提示而异，请以官方文档为准。
 
 ### Claude 启用思考
 
 ```json
 {
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-sonnet-4-6-20260217",
   "max_tokens": 1024,
   "thinking": { "type": "enabled", "budget_tokens": 2048 },
   "messages": [
@@ -274,13 +275,13 @@
   "config": {
     "thinkingConfig": {
       "includeThoughts": true,
-      "thinkingBudget": 2048
+      "thinking_level": "medium"
     }
   }
 }
 ```
 
-不指定 `budget_tokens`：将采用动态预算（`thinkingBudget = -1`）。
+不指定 `budget_tokens`：将采用默认思维级别（`thinking_level = "medium"`）。
 
 禁用（若模型允许禁用）：
 
@@ -318,7 +319,7 @@ interface GeminiUsageMetadata {
   totalTokenCount?: number;
   /** 从缓存中检索的内容令牌数量 */
   cachedContentTokenCount?: number;
-  /** 思维推理过程的令牌数量 (2025年新增，仅支持Gemini 2.5系列) */
+  /** 思维推理过程的令牌数量 (2026年新增，仅支持Gemini 3.1系列) */
   thoughtsTokenCount?: number;
 }
 ```
@@ -333,10 +334,10 @@ interface GeminiUsageMetadata {
 | `cachedContentTokenCount` | `number` | 从缓存中检索的内容令牌数量 | 🟡 使用缓存时 | 缓存令牌通常免费或优惠 |
 | `thoughtsTokenCount` | `number` | 思维推理过程中的令牌数量 | 🟡 使用thinking功能时 | 按输出令牌计费 |
 
-### 2025年新特性
+### 2026年新特性
 
 #### 思维令牌计数 (`thoughtsTokenCount`)
-- **支持模型**：Gemini 2.5 Pro, 2.5 Flash, 2.5 Flash-Lite
+- **支持模型**：Gemini 3.1 Pro, 3.1 Flash, 3.1 Flash-Lite
 - **功能说明**：追踪模型内部推理过程的令牌使用
 - **计费规则**：思维令牌计入总费用，但只输出摘要内容
 - **注意事项**：在某些实现中，`candidatesTokenCount` 可能包含或不包含思维令牌

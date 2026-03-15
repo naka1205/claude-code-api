@@ -22,7 +22,7 @@
 ### 基础文本生成
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -34,7 +34,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -53,7 +53,7 @@ console.log(data.candidates[0].content.parts[0].text);
 ### 系统指令配置
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -72,7 +72,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:g
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -96,7 +96,7 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
 ### 多轮对话
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -116,7 +116,7 @@ const messages = [
   { role: 'user', parts: [{ text: 'What is its population?' }] }
 ];
 
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -130,10 +130,64 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
 
 ## 思考功能 (Thinking)
 
+### 配置思维级别 (Thinking Level)
+
+Gemini 3.1 引入了 `thinkingLevel` 参数，允许更简单地控制推理深度：
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "contents": [{
+      "parts": [{ "text": "Solve a complex math problem" }]
+    }],
+    "generationConfig": {
+      "thinkingConfig": {
+        "thinkingLevel": "high"
+      }
+    }
+  }'
+```
+
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    contents: [{ parts: [{ text: 'Solve a complex math problem' }] }],
+    generationConfig: {
+      thinkingConfig: {
+        thinkingLevel: 'high' // 可选: 'low', 'medium', 'high'
+      }
+    }
+  })
+});
+```
+
+### 思考级别配置 (Thinking Level)
+
+Gemini 3.1 引入了 `thinking_level` 参数，取代了旧有的 token 预算模式，提供了更直观的推理强度控制：
+
+- **`low`**: 极速响应，适合总结、分类或简单的指令遵循任务。
+- **`medium`** (默认): 平衡模式，适用于大多数通用对话和编程辅助。
+- **`high`**: 深度推理，针对复杂数学证明、系统架构分析和多步骤逻辑推演。
+
+```json
+"thinkingConfig": {
+  "thinking_level": "high",
+  "includeThoughts": true
+}
+```
+
 ### 启用思维摘要
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -143,7 +197,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:gen
     }],
     "generationConfig": {
       "thinkingConfig": {
-        "thinkingBudget": 2048,
+        "thinking_level": "medium",
         "includeThoughts": true
       }
     }
@@ -151,7 +205,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:gen
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -163,7 +217,7 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
     }],
     generationConfig: {
       thinkingConfig: {
-        thinkingBudget: 2048,
+        thinking_level: 'medium',
         includeThoughts: true
       }
     }
@@ -681,7 +735,7 @@ const signature = processor.thoughtSignature;  // 用于下一轮对话
 ### 禁用思维（仅 Flash 支持）
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -691,7 +745,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
     }],
     "generationConfig": {
       "thinkingConfig": {
-        "thinkingBudget": 0
+        "thinking_level": "low"
       }
     }
   }'
@@ -699,7 +753,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 
 ```javascript
 // Flash 模型可以关闭 thinking 以降低成本
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -708,7 +762,7 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
   body: JSON.stringify({
     contents: [{ parts: [{ text: 'How does AI work?' }] }],
     generationConfig: {
-      thinkingConfig: { thinkingBudget: 0 }  // 关闭 thinking
+      thinkingConfig: { thinking_level: 'low' }  // 调低 thinking 级别以降低成本
     }
   })
 });
@@ -718,10 +772,12 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
 
 ## 多模态理解
 
-### 图像理解
+### 图像理解与分辨率控制
+
+Gemini 3.1 支持通过 `media_resolution` 参数控制视觉输入的解析精度，以平衡质量与 Token 消耗：
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -731,14 +787,17 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
         { "inlineData": { "mimeType": "image/jpeg", "data": "/9j/4AAQSkZJRg..." } },
         { "text": "What objects are in this image?" }
       ]
-    }]
+    }],
+    "generationConfig": {
+      "media_resolution": "high"
+    }
   }'
 ```
 
 ```javascript
 const imageBase64 = '/9j/4AAQSkZJRg...';  // Base64 编码的图像数据
 
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -750,7 +809,10 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
         { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
         { text: 'What objects are in this image?' }
       ]
-    }]
+    }],
+    generationConfig: {
+      media_resolution: 'high' // 可选: 'low', 'medium', 'high'
+    }
   })
 });
 ```
@@ -758,7 +820,7 @@ const response = await fetch('https://generativelanguage.googleapis.com/v1beta/m
 ### 结构化输出
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -782,7 +844,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -819,7 +881,7 @@ console.log(data);  // { persons: ["张三"], companies: ["字节跳动"] }
 ### 基础工具调用
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -853,7 +915,7 @@ const tools = [{
   }]
 }];
 
-let response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+let response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -874,7 +936,7 @@ console.log('Tool Call:', functionCall);
 const weatherResult = { temp: 28, condition: '多云' };
 
 // 第二轮：回传工具结果
-response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -898,7 +960,7 @@ console.log(data.candidates[0].content.parts[0].text);
 ### 并行函数调用
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -929,7 +991,7 @@ const tools = [{
   ]
 }];
 
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -953,6 +1015,46 @@ console.log('Parallel calls:', functionCalls);
 // ]
 ```
 
+### Computer Use 工具支持
+
+Gemini 3.1 支持使用计算机操作工具直接执行环境控制（如鼠标点击、键盘输入等自动化任务）：
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{
+    "tools": [{
+      "computerUse": {
+        "display": {
+          "width": 1920,
+          "height": 1080
+        }
+      }
+    }],
+    "contents": [{ "parts": [{ "text": "Click on the start button." }] }]
+  }'
+```
+
+```javascript
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent', {
+  method: 'POST',
+  headers: {
+    'x-goog-api-key': process.env.GEMINI_API_KEY,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    tools: [{
+      computerUse: {
+        display: { width: 1920, height: 1080 }
+      }
+    }],
+    contents: [{ parts: [{ text: 'Click on the start button.' }] }]
+  })
+});
+```
+
 ---
 
 ## Google 搜索集成
@@ -960,7 +1062,7 @@ console.log('Parallel calls:', functionCalls);
 ### 基础搜索
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -971,7 +1073,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -995,7 +1097,7 @@ console.log('Sources:', data.candidates[0].groundingMetadata.groundingChunks);
 ### Token 计数
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:countTokens" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -1005,7 +1107,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:c
 ```
 
 ```javascript
-const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens', {
+const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:countTokens', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -1023,7 +1125,7 @@ console.log('Total tokens:', data.totalTokens);
 ### 批处理模式
 
 ```bash
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:batchGenerateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
   -X POST \
@@ -1049,7 +1151,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:b
 ```
 
 ```javascript
-const batchResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent', {
+const batchResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:batchGenerateContent', {
   method: 'POST',
   headers: {
     'x-goog-api-key': process.env.GEMINI_API_KEY,
@@ -1109,4 +1211,4 @@ console.log('Batch state:', statusData.metadata.state);
 
 ---
 
-**最后更新**: 2025年1月
+**最后更新**: 2026年3月
