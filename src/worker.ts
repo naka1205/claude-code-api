@@ -10,9 +10,7 @@ import { createErrorResponse } from './utils/response';
 import { Logger } from './utils/logger';
 
 export interface Env {
-  KV?: KVNamespace;  // Make KV optional
-  // Environment variables can be accessed here
-  GEMINI_API_KEYS?: string;
+  KV?: KVNamespace;
   PORT?: string;
   HOST?: string;
   CORS_ENABLED?: string;
