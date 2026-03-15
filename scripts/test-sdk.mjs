@@ -18,8 +18,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = join(__dirname, 'sdk-logs');
 mkdirSync(LOG_DIR, { recursive: true });
 
-const GATEWAY_URL = 'https://claude-code-api.25069133.workers.dev';
-const GEMINI_API_KEY = 'AIzaSyBWOGHyQMg4Ng-s3YCa2mnw7b316njsBzY';
+const GATEWAY_URL = ' ';
+const GEMINI_API_KEY = ' ';
 const PROMPT = process.argv[3] || '你好，请用一句话介绍你自己';
 
 if (!GEMINI_API_KEY) {
