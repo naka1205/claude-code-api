@@ -106,12 +106,26 @@ export type ClaudeToolChoice =
 
 /**
  * Claude Extended Thinking 配置
- * 基于官方文档: https://docs.claude.com/en/docs/build-with-claude/extended-thinking
+ * 基于官方文档: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+ *
+ * Claude 4.6 系列推荐使用 adaptive 模式（无需手动指定 budget_tokens）
+ * 旧版模型（如 3.7 Sonnet）仍使用 enabled + budget_tokens
  */
 export interface ClaudeThinking {
-  /** thinking类型 */
-  type: 'enabled' | 'disabled';
-  /** 思考预算token数
+  /** thinking类型
+   * - 'adaptive': 自适应思考（Claude 4.6 推荐），通过 effort 控制思考强度
+   * - 'enabled': 启用思考（旧版），需指定 budget_tokens
+   * - 'disabled': 禁用思考
+   */
+  type: 'adaptive' | 'enabled' | 'disabled';
+  /** 思考精力控制（仅 adaptive 模式）
+   * - 'low': 极其高效，适合速度敏感或简单任务
+   * - 'medium': 平衡性能与成本
+   * - 'high' (默认): 发挥模型标准最高推理能力
+   * - 'max' (Opus 4.6 专属): 针对极高难度任务
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max';
+  /** 思考预算token数（仅 enabled 模式）
    * 官方要求：最小1024 tokens，必须小于max_tokens
    */
   budget_tokens?: number;
@@ -200,7 +214,7 @@ export interface ClaudeResponse {
   role: 'assistant';
   content: ClaudeContentBlock[];
   model: string;
-  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | null;
+  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | 'pause_turn' | 'refusal' | null;
   stop_sequence: string | null;
   usage: {
     input_tokens: number;

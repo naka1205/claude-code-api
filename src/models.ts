@@ -23,37 +23,53 @@ interface ModelCapability {
 
 /**
  * Claude到Gemini模型映射表
- * 仅支持文档中指定的6个模型
+ * 基于docs/README.md中的"支持的模型与映射"表格
  */
 const MODEL_MAPPING: Record<string, string> = {
-  // Claude Opus 4.1 -> Gemini 2.5 Pro (视觉、工具、高级性能)
-  'claude-opus-4-1-20250805': 'gemini-2.5-pro',
+  // Claude Opus 4.6 -> Gemini 3.1 Pro Preview (视觉、工具、高级性能)
+  'claude-opus-4-6-20260205': 'gemini-3.1-pro-preview',
+  'claude-opus-4-6': 'gemini-3.1-pro-preview',
 
-  // Claude Opus 4 -> Gemini 2.5 Pro (视觉、工具、高级性能)
-  'claude-opus-4-20250514': 'gemini-2.5-pro',
+  // Claude Opus 4.1 -> Gemini 3.1 Pro Preview (向后兼容)
+  'claude-opus-4-1-20250805': 'gemini-3.1-pro-preview',
+  'claude-opus-4-1': 'gemini-3.1-pro-preview',
 
-  // Claude Sonnet 4 -> Gemini 2.5 Flash (视觉、工具、高性能)
-  'claude-sonnet-4-20250514': 'gemini-2.5-flash',
-  'claude-sonnet-4-5-20250929': 'gemini-2.5-flash',
+  // Claude Opus 4 -> Gemini 3.1 Pro Preview (向后兼容)
+  'claude-opus-4-20250514': 'gemini-3.1-pro-preview',
 
-  // Claude 3.7 Sonnet -> Gemini 2.5 Flash (视觉、工具、高性能)
-  'claude-3-7-sonnet-20250219': 'gemini-2.5-flash',
+  // Claude Sonnet 4.6 -> Gemini 3 Flash Preview (视觉、工具、高性能)
+  'claude-sonnet-4-6-20260217': 'gemini-3-flash-preview',
+  'claude-sonnet-4-6': 'gemini-3-flash-preview',
 
-  // Claude 3.5 Sonnet -> Gemini 2.5 Flash-Lite (视觉、工具、快速高效)
-  'claude-3-5-sonnet-20241022': 'gemini-2.5-flash-lite',
+  // Claude Sonnet 4.5 -> Gemini 3 Flash Preview (向后兼容)
+  'claude-sonnet-4-5-20250929': 'gemini-3-flash-preview',
+  'claude-sonnet-4-5': 'gemini-3-flash-preview',
 
-  // Claude 3.5 Haiku -> Gemini 2.0 Flash (视觉、工具、快速)
-  'claude-3-5-haiku-20241022': 'gemini-2.0-flash'
+  // Claude Sonnet 4 -> Gemini 3 Flash Preview (向后兼容)
+  'claude-sonnet-4-20250514': 'gemini-3-flash-preview',
+
+  // Claude 3.7 Sonnet -> Gemini 3 Flash Preview (向后兼容)
+  'claude-3-7-sonnet-20250219': 'gemini-3-flash-preview',
+
+  // Claude 3.5 Sonnet -> Gemini 3 Flash Preview (视觉、工具、高性能)
+  'claude-3-5-sonnet-20241022': 'gemini-3-flash-preview',
+
+  // Claude Haiku 4.5 -> Gemini 3.1 Flash-Lite Preview (视觉、工具、快速高效)
+  'claude-haiku-4-5-20251001': 'gemini-3.1-flash-lite-preview',
+  'claude-haiku-4-5': 'gemini-3.1-flash-lite-preview',
+
+  // Claude 3.5 Haiku -> Gemini 3.1 Flash-Lite Preview (向后兼容)
+  'claude-3-5-haiku-20241022': 'gemini-3.1-flash-lite-preview'
 };
 
 /**
  * Gemini模型能力配置
- * 基于Google AI Studio官方文档更新的maxTokens限制
+ * 基于Google AI Studio官方文档
  * 参考: https://ai.google.dev/gemini-api/docs/models/gemini
  */
 const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
-  'gemini-2.5-pro': {
-    maxTokens: 65536,  // Gemini 2.5 Pro支持最大65536输出tokens
+  'gemini-3.1-pro-preview': {
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -64,8 +80,8 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     contextWindow: '2M tokens',
     freeRPM: 5
   },
-  'gemini-2.5-flash': {
-    maxTokens: 65536,  // Gemini 2.5 Flash支持最大65536输出tokens
+  'gemini-3-flash-preview': {
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -76,8 +92,8 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     contextWindow: '1M tokens',
     freeRPM: 10
   },
-  'gemini-2.5-flash-lite': {
-    maxTokens: 65536,  // Gemini 2.5 Flash-Lite支持最大65536输出tokens
+  'gemini-3.1-flash-lite-preview': {
+    maxTokens: 65536,
     supportsFunctions: true,
     supportsSystemInstructions: true,
     supportsTools: true,
@@ -87,18 +103,6 @@ const GEMINI_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     supportsThinking: true,
     contextWindow: '1M tokens',
     freeRPM: 15
-  },
-  'gemini-2.0-flash': {
-    maxTokens: 8192,   // Gemini 2.0 Flash支持最大8192输出tokens
-    supportsFunctions: true,
-    supportsSystemInstructions: true,
-    supportsTools: true,
-    supportsCodeExecution: false,
-    supportsGoogleSearch: false,
-    supportsJson: true,
-    supportsThinking: false,
-    contextWindow: '1M tokens',
-    freeRPM: 30
   }
 };
 

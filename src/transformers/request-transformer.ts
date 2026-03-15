@@ -98,7 +98,7 @@ export class RequestTransformer {
 
         if (thinkingConfig) {
           (generationConfig as any).thinkingConfig = {
-            thinkingBudget: thinkingConfig.thinkingBudget,
+            thinkingLevel: thinkingConfig.thinkingLevel,
             includeThoughts: thinkingConfig.includeThoughts
           };
         }
@@ -117,7 +117,7 @@ export class RequestTransformer {
       if (claudeRequest.tools && claudeRequest.tools.length > 0) {
         try {
           // 根据官方文档建议：推荐10-20个工具为最大值
-          const limitedTools = claudeRequest.tools.slice(0, 15);
+          const limitedTools = claudeRequest.tools.slice(0, 30);
           const toolResult = ToolTransformer.convertTools(limitedTools);
 
           // 记录工具转换警告和错误

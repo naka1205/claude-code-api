@@ -509,7 +509,7 @@ export class ResponseTransformer {
       hasContent: response.content && response.content.length > 0,
       contentLength: 0,
       hasToolUse: false,
-      stopReasonValid: ['end_turn', 'max_tokens', 'stop_sequence', 'tool_use'].includes(response.stop_reason || ''),
+      stopReasonValid: ['end_turn', 'max_tokens', 'stop_sequence', 'tool_use', 'pause_turn', 'refusal'].includes(response.stop_reason || ''),
       tokensReasonable: true
     };
 

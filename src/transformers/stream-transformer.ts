@@ -548,14 +548,14 @@ export class StreamTransformer {
    * @param exposeThinkingToClient 是否向客户端暴露thinking内容
    * @param requestId 请求ID（用于日志）
    * @param geminiModel Gemini模型名称（用于判断是否会返回signature）
-   * @param thinkingBudget thinking预算配置（用于判断是否会返回signature）
+   * @param thinkingLevel thinking级别配置（用于判断是否会返回signature）
    */
   static createClaudeStreamTransformer(
     claudeModel: string,
     exposeThinkingToClient: boolean = false,
     requestId?: string,
     geminiModel?: string,
-    thinkingBudget?: number
+    thinkingLevel?: import('./thinking-transformer').ThinkingLevel
   ): TransformStream<Uint8Array, Uint8Array> {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -564,8 +564,8 @@ export class StreamTransformer {
     const stateManager = new StreamStateManager();
 
     // 判断当前配置下模型是否会返回signature
-    const willReturnSignature = geminiModel && thinkingBudget !== undefined
-      ? ThinkingTransformer.willReturnSignature(geminiModel, thinkingBudget)
+    const willReturnSignature = geminiModel && thinkingLevel !== undefined
+      ? ThinkingTransformer.willReturnSignature(geminiModel, thinkingLevel)
       : true; // 默认假设会返回signature（兼容旧代码）
 
     return new TransformStream({
@@ -1237,10 +1237,10 @@ export class StreamTransformer {
     exposeThinkingToClient: boolean = false,
     requestId?: string,
     geminiModel?: string,
-    thinkingBudget?: number
+    thinkingLevel?: import('./thinking-transformer').ThinkingLevel
   ): ReadableStream {
     return geminiStream.pipeThrough(
-      this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, requestId, geminiModel, thinkingBudget)
+      this.createClaudeStreamTransformer(claudeModel, exposeThinkingToClient, requestId, geminiModel, thinkingLevel)
     );
   }
 }

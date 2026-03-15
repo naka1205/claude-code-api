@@ -94,14 +94,19 @@ export interface GeminiGenerationConfig {
   frequencyPenalty?: number;
   responseMimeType?: string;
   responseSchema?: any;
-  /** Gemini 2.5 Thinking 配置
+  /** Gemini 3.x Thinking 配置
    * 官方文档要点：
-   * - thinkingBudget: -1表示动态预算，0表示禁用
+   * - thinkingLevel: 控制推理深度级别 ('low' | 'medium' | 'high')
    * - includeThoughts: 是否包含思考内容在响应中
+   * Gemini 3.1 引入 thinkingLevel 参数，取代了旧有的 token 预算模式
    */
   thinkingConfig?: {
-    /** 思考预算：-1(动态) | 0(禁用) | 正整数(固定预算) */
-    thinkingBudget?: number;
+    /** 思考级别：控制推理深度
+     * - 'low': 极速响应，适合简单任务
+     * - 'medium' (默认): 平衡模式，适用于大多数任务
+     * - 'high': 深度推理，针对复杂任务
+     */
+    thinkingLevel?: 'low' | 'medium' | 'high';
     /** 是否在响应中包含思考内容 */
     includeThoughts?: boolean;
   };
@@ -230,7 +235,7 @@ export interface GeminiUsageMetadata {
   totalTokenCount?: number;
   /** 从缓存中检索的内容令牌数量 */
   cachedContentTokenCount?: number;
-  /** 思维推理过程的令牌数量 (2025年新增，仅支持Gemini 2.5系列) */
+  /** 思维推理过程的令牌数量 (仅支持Gemini 3.x系列) */
   thoughtsTokenCount?: number;
 }
 

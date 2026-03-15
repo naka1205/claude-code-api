@@ -16,7 +16,7 @@ export class StreamManager {
     exposeThinkingToClient: boolean = false,
     requestId?: string,
     geminiModel?: string,
-    thinkingBudget?: number
+    thinkingLevel?: import('../transformers/thinking-transformer').ThinkingLevel
   ): Response {
     try {
       // 创建转换后的流
@@ -26,7 +26,7 @@ export class StreamManager {
         exposeThinkingToClient,
         requestId,
         geminiModel,
-        thinkingBudget
+        thinkingLevel
       );
 
       // 返回SSE响应

@@ -173,12 +173,20 @@ export class ToolTransformer {
       const s: any = Array.isArray(schema) ? schema.map(sanitize) : { ...schema };
 
       // 修正：根据官方文档，保留Gemini支持的字段，只移除真正不支持的
+      // Gemini函数调用对JSON Schema的支持是严格的，不支持的字段会返回400错误
+      // 参考: https://github.com/langchain-ai/langchainjs/issues/8584
+      // 安全字段集: type, properties, items, required, description, enum
       const fieldsToRemove = [
-        '$schema', '$id', 'title', 'additionalProperties',
+        '$schema', '$id', '$ref', 'title', 'additionalProperties',
         'examples', 'default', 'format', 'pattern',
-        // 'minLength', 'maxLength', 'minimum', 'maximum',
-        'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'
-        // 注意：enum, const 实际上是被Gemini支持的，不应该移除
+        'propertyNames', 'patternProperties', 'dependencies',
+        'if', 'then', 'else', 'not', 'contains',
+        'minProperties', 'maxProperties', 'minItems', 'maxItems',
+        'uniqueItems', 'const',
+        'minLength', 'maxLength', 'minimum', 'maximum',
+        'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+        'contentMediaType', 'contentEncoding',
+        'definitions', '$defs'
       ];
 
       fieldsToRemove.forEach(field => delete s[field]);

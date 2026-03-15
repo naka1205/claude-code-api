@@ -34,7 +34,7 @@ export interface RateLimitItem {
 }
 
 export interface RateLimitConfig {
-  tiers: Record<'gemini-2.5-pro' | 'gemini-2.5-flash' | 'gemini-2.5-flash-lite' | 'gemini-2.0-flash', RateLimitItem>;
+  tiers: Record<'gemini-3.1-pro-preview' | 'gemini-3-flash-preview' | 'gemini-3.1-flash-lite-preview', RateLimitItem>;
 }
 
 /**
@@ -84,10 +84,9 @@ const DEFAULT_CONFIG: Config = {
   },
   rateLimits: {
     tiers: {
-      'gemini-2.5-pro': { rpm: 5, rpd: 100 },
-      'gemini-2.5-flash': { rpm: 10, rpd: 250 },
-      'gemini-2.5-flash-lite': { rpm: 15, rpd: 1000 },
-      'gemini-2.0-flash': { rpm: 30, rpd: 200 }
+      'gemini-3.1-pro-preview': { rpm: 5, rpd: 100 },
+      'gemini-3-flash-preview': { rpm: 10, rpd: 250 },
+      'gemini-3.1-flash-lite-preview': { rpm: 15, rpd: 1000 }
     }
   },
   blacklist: {

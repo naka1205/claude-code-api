@@ -218,12 +218,12 @@ curl -X POST https://your-worker.workers.dev/v1/messages \
 
 | Claude 模型 | Gemini 模型 | 上下文窗口 | 主要特性 |
 |------------|------------|-----------|---------|
-| claude-opus-4-1-20250805 | gemini-2.5-pro | 2M tokens | 最强能力，支持思维链 |
-| claude-opus-4-20250514 | gemini-2.5-pro | 2M tokens | 高级推理，视觉理解 |
-| claude-sonnet-4-20250514 | gemini-2.5-flash | 1M tokens | 平衡性能，支持工具 |
-| claude-3-7-sonnet-20250219 | gemini-2.5-flash-lite | 1M tokens | 快速响应，轻量级 |
-| claude-3-5-sonnet-20241022 | gemini-2.5-flash-lite | 1M tokens | 高效处理，低延迟 |
-| claude-3-5-haiku-20241022 | gemini-2.0-flash | 1M tokens | 基础模型，快速简洁 |
+| claude-opus-4-6-20260205 | gemini-3.1-pro | 2M tokens | 最强能力，支持思维链 |
+| claude-opus-4-1-20250805 | gemini-3.1-pro | 2M tokens | 高级推理，视觉理解 |
+| claude-sonnet-4-6-20260217 | gemini-3-flash | 1M tokens | 平衡性能，支持工具 |
+| claude-sonnet-4-20250514 | gemini-3-flash | 1M tokens | 快速响应，高性能 |
+| claude-3-5-sonnet-20241022 | gemini-3.1-flash-lite | 1M tokens | 高效处理，低延迟 |
+| claude-haiku-4-5 | gemini-3-flash | 1M tokens | 快速模型，高并发 |
 
 ## 项目架构
 

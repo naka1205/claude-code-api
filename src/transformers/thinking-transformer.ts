@@ -1,15 +1,22 @@
 /**
  * Thinking转换器 - 处理Claude与Gemini thinking配置转换
- * 仅保留必要的格式转换逻辑,不做内容分析
+ *
+ * Gemini 3.1 引入 thinkingLevel 参数，取代了旧有的 token 预算模式
+ * Claude 4.6 引入 adaptive 思考模式，通过 effort 控制思考强度
  */
 
 import { ClaudeRequest, ClaudeThinking } from '../types/claude';
 
 /**
+ * Thinking级别类型
+ */
+export type ThinkingLevel = 'low' | 'medium' | 'high';
+
+/**
  * Thinking配置接口
  */
 export interface ThinkingConfig {
-  thinkingBudget: number;
+  thinkingLevel: ThinkingLevel;
   includeThoughts?: boolean;
   exposeThoughtsToClient?: boolean;
   exposeToClient?: boolean;
@@ -21,37 +28,34 @@ export interface ThinkingConfig {
 export interface ThinkingRecommendation {
   recommended: boolean;
   reason: string;
-  suggestedBudget?: number;
+  suggestedLevel?: ThinkingLevel;
   modelSupport: boolean;
 }
 
 export class ThinkingTransformer {
-  static readonly defaultBudget = 2048;
-  static readonly maxBudget = 32768;
-
-  // 模型thinking限制配置
-  private static readonly THINKING_LIMITS: Record<string, {
-    min: number;
-    max: number;
-    default: number;
+  // 模型thinking级别配置
+  // 基于docs/README.md:
+  // - 3.1 Pro：支持 high、medium、low，默认为 medium，无法关闭
+  // - 3 Flash：支持 high、medium、low，默认为 medium，可以关闭
+  // - 3.1 Flash-Lite：默认不思考，可通过设置 thinking_level 启用
+  private static readonly THINKING_LEVELS: Record<string, {
+    supported: ThinkingLevel[];
+    default: ThinkingLevel;
     canDisable: boolean;
   }> = {
-      'gemini-2.5-pro': {
-        min: 128,
-        max: 6576,
-        default: -1,
+      'gemini-3.1-pro-preview': {
+        supported: ['low', 'medium', 'high'],
+        default: 'medium',
         canDisable: false
       },
-      'gemini-2.5-flash': {
-        min: 0,
-        max: 2576,
-        default: -1,
+      'gemini-3-flash-preview': {
+        supported: ['low', 'medium', 'high'],
+        default: 'medium',
         canDisable: true
       },
-      'gemini-2.5-flash-lite': {
-        min: 512,
-        max: 8276,
-        default: -1,
+      'gemini-3.1-flash-lite-preview': {
+        supported: ['low', 'medium', 'high'],
+        default: 'low',
         canDisable: true
       }
     };
@@ -60,75 +64,99 @@ export class ThinkingTransformer {
    * 转换Claude thinking配置为Gemini格式
    *
    * 核心逻辑：
-   * 1. enabled: includeThoughts=true, budget=-1（动态）或指定值
-   * 2. disabled:
-   *    - PRO模型：includeThoughts=false, budget=min（无法完全禁用）
-   *    - FLASH模型：includeThoughts=false, budget=0（完全禁用）
-   * 3. 未指定：includeThoughts=false, budget=-1（内部推理，不暴露）
+   * 1. adaptive模式: 根据effort映射到thinkingLevel
+   * 2. enabled模式(旧版): 根据budget_tokens推断级别
+   * 3. disabled: 对于可禁用模型返回null，Pro模型用最低级别
+   * 4. 未指定: 使用模型默认级别，不暴露思考内容
    */
   static transformThinking(
     claudeThinking: ClaudeThinking | undefined,
     geminiModel: string,
     claudeRequest: ClaudeRequest
   ): ThinkingConfig | null {
-    // 2.0系列不支持thinking
-    if (geminiModel.includes('2.0')) {
-      return {
-        thinkingBudget: 0,
-        includeThoughts: false,
-        exposeThoughtsToClient: false,
-        exposeToClient: false
-      };
-    }
-
-    const limits = this.THINKING_LIMITS[geminiModel];
-    if (!limits) {
-      return {
-        thinkingBudget: 0,
-        includeThoughts: false,
-        exposeThoughtsToClient: false,
-        exposeToClient: false
-      };
+    const config = this.THINKING_LEVELS[geminiModel];
+    if (!config) {
+      // 不支持thinking的模型
+      return null;
     }
 
     // 如果明确指定了thinking配置
-    if (claudeThinking && claudeThinking.type === 'enabled') {
-
-      let budget: number;
-      if (claudeThinking.budget_tokens && geminiModel.includes('flash')) {
-        budget = Math.min(claudeThinking.budget_tokens, limits.max);
-        budget = Math.max(budget, limits.min);
-      } else {
-        budget = limits.default;
+    if (claudeThinking) {
+      // adaptive模式（Claude 4.6推荐）
+      if (claudeThinking.type === 'adaptive') {
+        const level = this.mapEffortToLevel(claudeThinking.effort || 'high');
+        return {
+          thinkingLevel: level,
+          includeThoughts: true,
+          exposeThoughtsToClient: true,
+          exposeToClient: true
+        };
       }
-      return {
-        thinkingBudget: budget,
-        includeThoughts: true,  // ← Gemini 返回推理文本
-        exposeThoughtsToClient: true,  // ← 暴露给客户端
-        exposeToClient: true
-      };
+
+      // enabled模式（旧版兼容）
+      if (claudeThinking.type === 'enabled') {
+        const level = this.mapBudgetToLevel(claudeThinking.budget_tokens);
+        return {
+          thinkingLevel: level,
+          includeThoughts: true,
+          exposeThoughtsToClient: true,
+          exposeToClient: true
+        };
+      }
+
+      // disabled模式
+      if (claudeThinking.type === 'disabled') {
+        if (config.canDisable) {
+          // Flash模型可以禁用，不发送thinkingConfig
+          return null;
+        }
+        // Pro模型无法禁用，用最低级别
+        return {
+          thinkingLevel: 'low',
+          includeThoughts: false,
+          exposeThoughtsToClient: false,
+          exposeToClient: false
+        };
+      }
     }
 
-    if (limits.canDisable) {
-      limits.min = 0
-    }
-
+    // 未指定thinking配置：使用模型默认级别，不暴露思考内容
     return {
-      thinkingBudget: limits.min,
-      includeThoughts: false,  // ← 内部推理，不返回文本
+      thinkingLevel: config.default,
+      includeThoughts: false,
       exposeThoughtsToClient: false,
       exposeToClient: false
     };
   }
 
   /**
+   * 将Claude的effort级别映射到Gemini的thinkingLevel
+   */
+  private static mapEffortToLevel(effort: string): ThinkingLevel {
+    switch (effort) {
+      case 'low': return 'low';
+      case 'medium': return 'medium';
+      case 'high': return 'high';
+      case 'max': return 'high'; // max是Opus专属，映射到Gemini最高级别
+      default: return 'medium';
+    }
+  }
+
+  /**
+   * 将旧版budget_tokens映射到thinkingLevel
+   */
+  private static mapBudgetToLevel(budgetTokens?: number): ThinkingLevel {
+    if (!budgetTokens) return 'medium';
+    if (budgetTokens < 4000) return 'low';
+    if (budgetTokens <= 10000) return 'medium';
+    return 'high';
+  }
+
+  /**
    * 检查模型是否支持thinking
    */
   static modelSupportsThinking(geminiModel: string): boolean {
-    if (geminiModel.includes('2.0')) {
-      return false;
-    }
-    return !!this.THINKING_LIMITS[geminiModel];
+    return !!this.THINKING_LEVELS[geminiModel];
   }
 
   /**
@@ -136,29 +164,15 @@ export class ThinkingTransformer {
    */
   static createThinkingConfig(
     enabled: boolean,
-    budget?: number,
-    exposeToClient: boolean = false,
-    geminiModel?: string,
-    maxTokens?: number
+    level?: ThinkingLevel,
+    exposeToClient: boolean = false
   ): ThinkingConfig | null {
     if (!enabled) {
-      return {
-        thinkingBudget: 0,
-        includeThoughts: false,
-        exposeThoughtsToClient: false,
-        exposeToClient: false
-      };
-    }
-
-    let finalBudget = budget || this.defaultBudget;
-
-    if (geminiModel && maxTokens) {
-      const result = this.validateAndAdjustBudget(finalBudget, maxTokens, geminiModel);
-      finalBudget = result.budget;
+      return null;
     }
 
     return {
-      thinkingBudget: finalBudget,
+      thinkingLevel: level || 'medium',
       includeThoughts: true,
       exposeThoughtsToClient: exposeToClient,
       exposeToClient: exposeToClient
@@ -203,63 +217,10 @@ export class ThinkingTransformer {
     geminiSignature?: string
   ): string | undefined {
     if (!geminiSignature) {
-      // 不返回占位符，返回 undefined 表示没有签名
       return undefined;
     }
-
     // 直接返回Gemini的原始签名,不做任何转换
     return geminiSignature;
-  }
-
-  /**
-   * 验证并调整thinking预算
-   */
-  static validateAndAdjustBudget(
-    requestedBudget: number,
-    maxTokens: number,
-    geminiModel: string
-  ): { budget: number; warnings: string[] } {
-    const warnings: string[] = [];
-    const limits = this.THINKING_LIMITS[geminiModel];
-
-    if (!limits) {
-      warnings.push(`Model ${geminiModel} does not support thinking`);
-      return { budget: 0, warnings };
-    }
-
-    let adjustedBudget = requestedBudget;
-
-    // Claude最小1024 tokens
-    if (adjustedBudget > 0 && adjustedBudget < 1024) {
-      adjustedBudget = 1024;
-      warnings.push('Thinking budget adjusted to minimum 1024 tokens (Claude requirement)');
-    }
-
-    // 模型最大限制
-    if (adjustedBudget > limits.max) {
-      adjustedBudget = limits.max;
-      warnings.push(`Thinking budget adjusted to model maximum ${limits.max} tokens`);
-    }
-
-    // 模型最小限制
-    if (adjustedBudget > 0 && adjustedBudget < limits.min) {
-      adjustedBudget = limits.min;
-      warnings.push(`Thinking budget adjusted to model minimum ${limits.min} tokens`);
-    }
-
-    // thinking预算必须小于max_tokens
-    if (adjustedBudget >= maxTokens) {
-      adjustedBudget = Math.max(limits.min, maxTokens - 100);
-      warnings.push('Thinking budget adjusted to be less than max_tokens (Claude requirement)');
-    }
-
-    // 检查是否尝试禁用不可禁用的模型
-    if (adjustedBudget === 0 && !limits.canDisable) {
-      adjustedBudget = limits.min;
-      warnings.push(`Model ${geminiModel} cannot disable thinking, using minimum budget`);
-    }
-
-    return { budget: adjustedBudget, warnings };
   }
 
   /**
@@ -277,16 +238,10 @@ export class ThinkingTransformer {
       return { isValid: true, errors, warnings };
     }
 
-    if (config.thinkingBudget !== undefined) {
-      if (typeof config.thinkingBudget !== 'number') {
-        errors.push('thinkingBudget must be a number');
-      } else {
-        if (config.thinkingBudget < 50 && config.thinkingBudget !== 0) {
-          warnings.push('thinkingBudget is very low, may not provide enough reasoning space');
-        }
-        if (config.thinkingBudget > this.maxBudget) {
-          warnings.push(`thinkingBudget exceeds recommended maximum (${this.maxBudget})`);
-        }
+    if (config.thinkingLevel !== undefined) {
+      const validLevels: ThinkingLevel[] = ['low', 'medium', 'high'];
+      if (!validLevels.includes(config.thinkingLevel)) {
+        errors.push(`thinkingLevel must be one of: ${validLevels.join(', ')}`);
       }
     }
 
@@ -304,20 +259,18 @@ export class ThinkingTransformer {
   /**
    * 判断模型在当前配置下是否会返回signature
    * @param geminiModel Gemini模型名称
-   * @param thinkingBudget thinking预算配置
+   * @param thinkingLevel thinking级别（null表示未配置）
    * @returns true表示会返回signature，false表示不会
    */
-  static willReturnSignature(geminiModel: string, thinkingBudget: number): boolean {
-    const limits = this.THINKING_LIMITS[geminiModel];
-    if (!limits) return false;
+  static willReturnSignature(geminiModel: string, thinkingLevel: ThinkingLevel | null): boolean {
+    const config = this.THINKING_LEVELS[geminiModel];
+    if (!config) return false;
 
-    // 如果模型可以禁用推理，且budget设为0，则不会返回signature
-    if (limits.canDisable && thinkingBudget === 0) {
-      return false;
-    }
+    // Pro模型无法禁用thinking，始终返回signature
+    if (!config.canDisable) return true;
 
-    // 其他情况（PRO模型或启用推理）都会返回signature
-    return true;
+    // Flash模型：如果有配置thinkingLevel则会返回signature
+    return thinkingLevel !== null;
   }
 
   /**
