@@ -345,7 +345,7 @@ export class RequestTransformer {
           thinkingBlock.signature.length > 100;
 
         if (hasValidSignature) {
-          // 保存signature,稍后附加到下一个非thinking block
+          // 保存signature,稍后附加到正确的part上
           pendingSignature = thinkingBlock.signature;
         }
 
@@ -362,12 +362,22 @@ export class RequestTransformer {
       // 转换当前item
       const part = await ContentTransformer.transformContentItem(item);
       if (part) {
-        // 如果有pending signature,附加到这个part上
-        if (pendingSignature) {
-          (part as any).thoughtSignature = pendingSignature;
-          pendingSignature = undefined;
-        }
         parts.push(part);
+      }
+    }
+
+    // 附加pendingSignature到正确的part上
+    // Gemini要求thoughtSignature在functionCall part上（如果有），否则在第一个非thinking part上
+    if (pendingSignature) {
+      const functionCallPart = parts.find(p => 'functionCall' in p);
+      if (functionCallPart) {
+        (functionCallPart as any).thoughtSignature = pendingSignature;
+      } else {
+        // 没有functionCall时，附加到第一个非thinking part
+        const targetPart = parts.find(p => !('thought' in p));
+        if (targetPart) {
+          (targetPart as any).thoughtSignature = pendingSignature;
+        }
       }
     }
 

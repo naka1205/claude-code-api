@@ -908,10 +908,11 @@ export class StreamTransformer {
                           };
                           sendEvent('content_block_stop', thinkingBlockStop);
                           stateManager.stopThinkingBlock();
-                        } else if (!exposeThinkingToClient) {
-                          // 场景2: thinking block未开始且禁用推理（includeThoughts=false）
-                          // 创建空thinking block，发送signature，然后关闭
-                          console.log('[DEBUG] 🔑 Creating empty thinking block for signature (functionCall+signature)');
+                        } else {
+                          // 场景2: thinking block未开始（无论exposeThinkingToClient如何设置）
+                          // Gemini Flash模型可能直接返回functionCall+thoughtSignature但不返回thought文本
+                          // 必须创建空thinking block + signature，否则客户端回传时缺少signature导致Gemini 400
+                          console.log('[DEBUG] 🔑 Creating empty thinking block for signature (functionCall+signature, expose:', exposeThinkingToClient, ')');
                           const blockIndex = stateManager.startThinkingBlock();
                           const thinkingBlockStart: ClaudeStreamEvent = {
                             type: 'content_block_start',

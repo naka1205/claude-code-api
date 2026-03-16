@@ -102,7 +102,7 @@ curl -X POST https://your-worker.workers.dev/v1/messages \
 | Messages API | ✅ | 包括所有请求/响应格式 |
 | 流式响应 (SSE) | ✅ | 实时流式输出 |
 | 工具调用 (Tools) | ✅ | Function Calling 双向转换 |
-| 思维推理 (Thinking) | ✅ | Extended Thinking 完整支持 |
+| 思维推理 (Thinking) | ✅ | Extended Thinking 完整支持，含 Thought Signature 多轮传递 |
 | 多模态内容 | ✅ | 文本 + 图像 + 文档 |
 | Token 计数 | ✅ | 计数端点 |
 | WebSearch | ✅ | 转换为 Gemini google_search |
@@ -114,6 +114,7 @@ curl -X POST https://your-worker.workers.dev/v1/messages \
 |----------|------|---------|
 | `claude-code-20250219` | ✅ | Claude Code 客户端支持 |
 | `interleaved-thinking-2025-05-14` | ✅ | 思维推理完整转换 |
+| `redact-thinking-2026-02-12` | ✅ | 思维签名正确传递，支持多轮工具调用 |
 | `fine-grained-tool-streaming-2025-05-14` | ✅ | 工具调用流式输出 |
 | `token-efficient-tools-2025-02-19` | ✅ | 透明兼容 |
 | `output-128k-2025-02-19` | ✅ | 长输出支持 |
@@ -195,6 +196,18 @@ npm run test:tools   # 测试工具调用
 npm run test:stream  # 测试流式响应
 npx wrangler tail    # 查看实时日志
 ```
+
+## 已知问题与修复记录
+
+### Thought Signature 多轮对话支持
+
+Gemini API 在启用 thinking 时，会在 `functionCall` part 上附加 `thoughtSignature`，后续请求必须回传此签名，否则返回 400 错误。
+
+**影响场景**：Sonnet 模型（`gemini-3-flash-preview`）在工具调用时可能不返回 `thought` 文本，仅返回 `functionCall` + `thoughtSignature`，而 Opus 模型（`gemini-3.1-pro-preview`）始终返回完整的思考文本。
+
+**修复方案**：
+1. **流式转换器**：当 `functionCall` 携带 `thoughtSignature` 但无前置 `thought` 文本时，创建空的 `thinking` block 传递 signature（`stream-transformer.ts`）
+2. **请求转换器**：将 `thoughtSignature` 优先附加到 `functionCall` part 而非中间的 `text` part（`request-transformer.ts`）
 
 ## 常见问题
 
